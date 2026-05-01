@@ -1,0 +1,31 @@
+# Controle de versão
+.git
+.gitignore
+
+# Cache Python
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Logs e checkpoints de treino (montados via -v ao rodar)
+logs/
+
+# Arquivos de editor e IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Arquivos temporários e de OS
+*.DS_Store
+Thumbs.db
+*.tmp
+
+# O tarball do Isaac Gym é copiado explicitamente no Dockerfile (COPY ${ISAACGYM_FILE})
+# e não deve ser excluído do contexto de build.
+# IsaacGym_Preview_4_Package.tar.gz  ← NÃO excluir
+
+# Vídeos gravados pelo ambiente
+*.mp4
