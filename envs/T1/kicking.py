@@ -334,6 +334,14 @@ class Kicking(BaseTask):
                 self.default_dof_pos[:, i] = self.cfg["init_state"]["default_joint_angles"]["default"]
 
         self.last_ball_lin_vel_world = torch.zeros_like(self.body_states[:, -1, 7:10]) # World frame
+        self.kick_target_pos_world = torch.zeros(self.num_envs, 2, dtype=torch.float, device=self.device)
+        self.kick_detected = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        self.angular_error_at_kick = torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+        self.ball_crossed_ref = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        self.ball_ref_y_error = torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+        # Accumulators for per-iteration metrics (cleared each time get_kick_metrics() is called)
+        self._kick_angular_errors_log: list = []
+        self._kick_lateral_errors_log: list = []
 
     def _prepare_reward_function(self):
         """Prepares a list of reward functions, whcih will be called to compute the total reward.
@@ -473,6 +481,27 @@ class Kicking(BaseTask):
         self._reset_dofs(env_ids)
         self._reset_root_states(env_ids)
 
+        # Log kick metrics before resetting buffers
+        kick_success_mask = self.kick_detected[env_ids]
+        if kick_success_mask.any():
+            angular_errors = self.angular_error_at_kick[env_ids][kick_success_mask]
+            self.extras["angular_error_at_kick_deg"] = angular_errors.mean()
+            self.extras["kick_success_rate_20deg"] = (angular_errors < 20.0).float().mean()
+            for v in angular_errors.cpu().tolist():
+                self._kick_angular_errors_log.append(v)
+
+        crossed_mask = self.ball_crossed_ref[env_ids]
+        if crossed_mask.any():
+            for v in self.ball_ref_y_error[env_ids][crossed_mask].cpu().tolist():
+                self._kick_lateral_errors_log.append(v)
+
+        # Sample new kick target direction for reset environments
+        self._resample_kick_target(env_ids)
+        self.kick_detected[env_ids] = False
+        self.angular_error_at_kick[env_ids] = 0.0
+        self.ball_crossed_ref[env_ids] = False
+        self.ball_ref_y_error[env_ids] = 0.0
+
         # Continue with existing reset code...
         self.last_dof_targets[env_ids] = self.dof_pos[env_ids]
         self.last_root_vel[env_ids] = self.root_states[env_ids, 0, 7:13]
@@ -585,6 +614,36 @@ class Kicking(BaseTask):
                 gymtorch.unwrap_tensor(ball_actor_indices),
                 len(ball_actor_indices)
             )
+
+    def _resample_kick_target(self, env_ids):
+        """Sample a random kick target direction for the specified environments."""
+        angle_range = self.cfg["rewards"].get("kick_target_angle_range_deg", [-45., 45.])
+        angles_deg = torch_rand_float(
+            angle_range[0], angle_range[1], (len(env_ids), 1), device=self.device
+        ).squeeze(1)
+        angles_rad = angles_deg * (np.pi / 180.0)
+        robot_yaw = get_euler_xyz(self.root_states[env_ids, 0, 3:7])[2]
+        target_angle_world = robot_yaw + angles_rad
+        ref_distance = self.cfg["rewards"].get("kick_target_ref_distance", 8.0)
+        ball_pos = self.root_states[env_ids, 1, 0:2]
+        self.kick_target_pos_world[env_ids, 0] = ball_pos[:, 0] + ref_distance * torch.cos(target_angle_world)
+        self.kick_target_pos_world[env_ids, 1] = ball_pos[:, 1] + ref_distance * torch.sin(target_angle_world)
+
+    def get_kick_metrics(self) -> dict:
+        """Return per-iteration kick metrics and clear accumulators. Called by the runner."""
+        metrics = {}
+        if self._kick_angular_errors_log:
+            errors = self._kick_angular_errors_log
+            metrics["kick/angular_error_deg_mean"] = sum(errors) / len(errors)
+            metrics["kick/success_rate_20deg"] = sum(1 for e in errors if e < 20.0) / len(errors)
+            metrics["kick/num_kicks"] = float(len(errors))
+            self._kick_angular_errors_log = []
+        if self._kick_lateral_errors_log:
+            lat = self._kick_lateral_errors_log
+            metrics["kick/lateral_error_m_mean"] = sum(lat) / len(lat)
+            metrics["kick/fraction_reached_ref_line"] = float(len(lat)) / max(float(self.env_resets), 1.0)
+            self._kick_lateral_errors_log = []
+        return metrics
 
     def _teleport_robot(self):
         if self.terrain.type == "plane":
@@ -747,6 +806,31 @@ class Kicking(BaseTask):
         self.time_since_ball_is_moving_buf = torch.where(~ball_is_active, 
                                                         torch.zeros_like(self.time_since_ball_is_moving_buf), 
                                                         self.time_since_ball_is_moving_buf + self.dt)
+
+        # Detect first kick per episode and record angular error metric
+        ball_speed_world = torch.norm(self.root_states[:, 1, 7:10], dim=-1)
+        newly_kicked = (ball_speed_world > 0.5) & ~self.kick_detected
+        if newly_kicked.any():
+            ball_vel_xy = self.root_states[newly_kicked, 1, 7:9]
+            ball_vel_dir = ball_vel_xy / (torch.norm(ball_vel_xy, dim=-1, keepdim=True) + 1e-6)
+            target_dir = self.kick_target_pos_world[newly_kicked] - self.ball_pos[newly_kicked, :2]
+            target_dir = target_dir / (torch.norm(target_dir, dim=-1, keepdim=True) + 1e-6)
+            cos_err = (ball_vel_dir * target_dir).sum(dim=-1).clamp(-1.0, 1.0)
+            self.angular_error_at_kick[newly_kicked] = torch.acos(cos_err) * (180.0 / np.pi)
+            self.kick_detected[newly_kicked] = True
+
+        # Detect first crossing of the lateral reference line and record y error
+        ref_x = self.cfg["rewards"].get("lateral_error_ref_x", 3.0)
+        robot_ref_x = self.base_pos[:, 0] + ref_x
+        ball_x = self.ball_pos[:, 0]
+        crossed_now = (ball_x >= robot_ref_x) & ~self.ball_crossed_ref
+        if crossed_now.any():
+            target_y = self.kick_target_pos_world[crossed_now, 1]
+            # Scale target_y to the ref line (target is at ref_distance, scale linearly)
+            ref_dist = self.cfg["rewards"].get("kick_target_ref_distance", 8.0)
+            target_y_at_ref = target_y * (ref_x / ref_dist)
+            self.ball_ref_y_error[crossed_now] = torch.abs(self.ball_pos[crossed_now, 1] - target_y_at_ref)
+            self.ball_crossed_ref[crossed_now] = True
 
         self._kick_robots()
         self._push_robots()
@@ -926,12 +1010,25 @@ class Kicking(BaseTask):
         ball_pos_world_frame = self.ball_pos - self.base_pos
         relative_ball_pos = quat_rotate_inverse(self.base_quat, ball_pos_world_frame)
 
+        # Kick target direction in robot frame as [cos θ, sin θ]
+        ball_to_target = self.kick_target_pos_world - self.ball_pos[:, :2]
+        ball_to_target_norm = ball_to_target / (torch.norm(ball_to_target, dim=-1, keepdim=True) + 1e-6)
+        _, _, robot_yaw = get_euler_xyz(self.base_quat)
+        cos_yaw = torch.cos(robot_yaw)
+        sin_yaw = torch.sin(robot_yaw)
+        target_dir_robot = torch.stack([
+            cos_yaw * ball_to_target_norm[:, 0] + sin_yaw * ball_to_target_norm[:, 1],
+            -sin_yaw * ball_to_target_norm[:, 0] + cos_yaw * ball_to_target_norm[:, 1],
+        ], dim=-1)
+        target_dir_robot = apply_randomization(target_dir_robot, self.cfg["noise"].get("target_direction")) * self.cfg["normalization"]["target_dir"]
+
         self.obs_buf = torch.cat(
             (
                 apply_randomization(self.projected_gravity, self.cfg["noise"].get("gravity")) * self.cfg["normalization"]["gravity"],
                 apply_randomization(self.base_ang_vel, self.cfg["noise"].get("ang_vel")) * self.cfg["normalization"]["ang_vel"],
                 # Use relative ball position in observations
-                apply_randomization(relative_ball_pos[:, 0:2], self.cfg["noise"].get("ball_pos")) * self.cfg["normalization"]["ball_pos"],  
+                apply_randomization(relative_ball_pos[:, 0:2], self.cfg["noise"].get("ball_pos")) * self.cfg["normalization"]["ball_pos"],
+                target_dir_robot,  # kick target direction [cos θ, sin θ] in robot frame
                 #relative_ball_vel[:, 0:2],
                 #self.commands[:, :3] * commands_scale,
                 #(torch.cos(2 * torch.pi * self.gait_process) * (self.gait_frequency > 1.0e-8).float()).unsqueeze(-1),
@@ -1119,22 +1216,17 @@ class Kicking(BaseTask):
         # cfg["rewards"]["ball_vel_target_direction_sigma"] - for scaling the reward
         # cfg["rewards"]["ball_velocity_decay_time"] - time constant for exponential decay when ball is moving
         
-        # Get the target position from config
-        target_position = to_torch([5.0, 0.0, 0.05], device=self.device).unsqueeze(0)
-        
-        # Get current ball position and velocity (in world frame)
-        ball_pos_world = self.body_states[:, -1, 0:3]
-        ball_vel_world = self.body_states[:, -1, 7:10]
-        
-        # Calculate the direction vector from ball to target
-        ball_to_target = target_position - ball_pos_world
+        # Get current ball position and velocity (world frame, XY)
+        ball_pos_xy = self.ball_pos[:, :2]
+        ball_vel_xy = self.root_states[:, 1, 7:9]
+
+        # Direction from ball to dynamically sampled target
+        ball_to_target = self.kick_target_pos_world - ball_pos_xy
         distance_to_target = torch.norm(ball_to_target, dim=-1, keepdim=True)
-        
-        # Normalize the direction vector (avoid division by zero)
         ball_to_target_normalized = ball_to_target / (distance_to_target + 1e-6)
-        
+
         # Project ball velocity onto the target direction
-        velocity_towards_target = torch.sum(ball_vel_world * ball_to_target_normalized, dim=-1)
+        velocity_towards_target = torch.sum(ball_vel_xy * ball_to_target_normalized, dim=-1)
         
         # Reward only positive velocity towards the target
         # Using an exponential function for a smoother reward landscape
@@ -1198,9 +1290,12 @@ class Kicking(BaseTask):
         robot_to_ball_world = ball_pos_world - robot_pos_world
         robot_to_ball_world_normalized = robot_to_ball_world / (torch.norm(robot_to_ball_world, dim=-1, keepdim=True) + 1e-6)
 
-        # Alignment with a fixed target position
-        kick_target_pos_world = to_torch(self.cfg["rewards"].get("kick_target_pos_world", [5.0, 0.0, self.ball_radius]), device=self.device).unsqueeze(0)
-        robot_to_target_world = kick_target_pos_world - robot_pos_world
+        # Alignment with the dynamically sampled target direction
+        kick_target_pos_world_3d = torch.cat([
+            self.kick_target_pos_world,
+            torch.full((self.num_envs, 1), self.ball_radius, device=self.device)
+        ], dim=-1)
+        robot_to_target_world = kick_target_pos_world_3d - robot_pos_world
         robot_to_target_world_normalized = robot_to_target_world / (torch.norm(robot_to_target_world, dim=-1, keepdim=True) + 1e-6)
         
         alignment_to_target = torch.sum(robot_forward_world * robot_to_target_world_normalized, dim=-1)
@@ -1232,12 +1327,17 @@ class Kicking(BaseTask):
         """Rewards ball acceleration towards the target direction, encouraging effective kicks."""
         # Get current and previous ball velocities in world frame
         current_ball_vel_world = self.body_states[:, -1, 7:9]
-        prev_ball_vel_world = self.last_ball_lin_vel_world[:,:2]
-        
+        prev_ball_vel_world = self.last_ball_lin_vel_world[:, :2]
+
         # Calculate ball acceleration (change in velocity / time)
         ball_acceleration = (current_ball_vel_world - prev_ball_vel_world) / self.dt
 
-        ball_effective_acceleration = ball_acceleration[:, 0] - torch.abs(ball_acceleration[:, 1])
+        # Project acceleration onto target direction, penalize lateral component
+        target_dir = self.kick_target_pos_world - self.ball_pos[:, :2]
+        target_dir = target_dir / (torch.norm(target_dir, dim=-1, keepdim=True) + 1e-6)
+        accel_towards_target = (ball_acceleration * target_dir).sum(dim=-1)
+        accel_lateral = torch.abs(-ball_acceleration[:, 0] * target_dir[:, 1] + ball_acceleration[:, 1] * target_dir[:, 0])
+        ball_effective_acceleration = accel_towards_target - accel_lateral
         
         # Get parameters from config with defaults
         acceleration_scale = self.cfg["rewards"].get("ball_acceleration_scale", 10.0)

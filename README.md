@@ -134,6 +134,87 @@ HTWK Gym uses Python virtual environments for flexible dependency management. Fo
 
     This enables TensorFlow Lite model export for mobile and embedded deployment.
 
+## Docker (Recommended)
+
+Docker is the easiest way to run HTWK Gym without manually installing Isaac Gym and its dependencies.
+
+### Prerequisites
+
+- [Docker](https://docs.docker.com/get-docker/) with the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
+- NVIDIA GPU with driver ≥ 525
+
+### Build the image
+
+```sh
+docker build -t htwk-gym .
+```
+
+The build downloads and installs all dependencies (Isaac Gym, PyTorch, etc.) inside the container. This only needs to be done once (or after changing dependencies).
+
+### Training (headless)
+
+```sh
+docker run --rm --gpus all \
+  -e WANDB_API_KEY=<your_key> \
+  -v $(pwd)/logs:/app/logs \
+  -v $(pwd)/.gymtorch_cache:/root/.cache/torch_extensions \
+  htwk-gym \
+  python3 train.py \
+    --task T1/Kicking \
+    --num_envs 6000 \
+    --headless True \
+    --sim_device cuda:0 \
+    --rl_device cuda:0
+```
+
+- Replace `T1/Kicking` with any supported task (e.g. `T1/BaseWalk`).
+- Set `WANDB_MODE=disabled` to skip Weights & Biases logging.
+- Trained checkpoints are saved to `logs/` on the host via the volume mount.
+- The `.gymtorch_cache` volume avoids recompiling CUDA extensions on every run.
+
+### Playing / Visualisation (with display)
+
+```sh
+xhost +local:docker
+docker run --rm --gpus all \
+  -e DISPLAY=$DISPLAY \
+  -e WANDB_MODE=disabled \
+  -v /tmp/.X11-unix:/tmp/.X11-unix \
+  -v $(pwd)/logs:/app/logs \
+  -v $(pwd)/.gymtorch_cache:/root/.cache/torch_extensions \
+  htwk-gym \
+  python3 play.py \
+    --task T1/Kicking \
+    --checkpoint logs/T1/T1/Kicking/<timestamp>/nn/model_<N>.pth \
+    --num_envs 4 \
+    --sim_device cuda:0 \
+    --rl_device cuda:0
+```
+
+Pass `--checkpoint=-1` to automatically load the most recent checkpoint.
+
+### Collecting RSI states (for kicking initialisation)
+
+After training a walking policy, generate a Reference State Initialization buffer for the kicking task:
+
+```sh
+docker run --rm --gpus all \
+  -v $(pwd)/logs:/app/logs \
+  -v $(pwd)/.gymtorch_cache:/root/.cache/torch_extensions \
+  htwk-gym \
+  python3 collect_rsi_states.py \
+    --checkpoint logs/T1/T1/Base_Walk/<timestamp>/nn/model_<N>.pth \
+    --num_envs 1000 \
+    --num_steps 3000 \
+    --output logs/rsi_buffer.pt \
+    --sim_device cuda:0 \
+    --rl_device cuda:0
+```
+
+The resulting `logs/rsi_buffer.pt` is automatically used by the kicking task when `rsi_buffer_path` is set in `Kicking.yaml`.
+
+---
+
 ## Usage
 
 ### 1. Training

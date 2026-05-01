@@ -10,7 +10,7 @@ basic:
 
 env:
   num_envs: 1
-  num_observations: 44
+  num_observations: 46
   num_privileged_obs: 20
   num_actions: 12
   env_spacing: 5.  # not used with plane terrain
@@ -162,6 +162,7 @@ normalization:
   push_torque: 0.5
   clip_actions: 1.
   ball_pos: 1.0
+  target_dir: 1.0
 
 noise:
   gravity:
@@ -190,6 +191,10 @@ noise:
     distribution: "gaussian"
   ball_pos:
     range: [-0.01, 0.01]
+    operation: "additive"
+    distribution: "gaussian"
+  target_direction:
+    range: [0., 0.05]
     operation: "additive"
     distribution: "gaussian"
 
@@ -336,6 +341,9 @@ rewards:
   
   # Parameters for new kick-related rewards
   ball_target_position: [6.0, 0.0] # Target position for ball to move toward (world frame, z should be ball radius)
+  kick_target_angle_range_deg: [-15., 15.] # Range of kick target angles relative to robot forward [deg]
+  kick_target_ref_distance: 8.0             # Distance from ball to target point for direction sampling [m]
+  lateral_error_ref_x: 3.0                  # X distance [m] at which lateral error is measured
   max_ball_vel_target_reward: 10.0      # Max reward for ball velocity toward target
   ball_vel_target_direction_sigma: 1.0 # Sigma for ball velocity toward target reward
   ball_velocity_decay_time: 0.1 # Time constant in seconds for ball velocity decay

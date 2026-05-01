@@ -274,8 +274,7 @@ class Runner:
             mean_actor_loss /= self.cfg["runner"]["mini_epochs"]
             mean_bound_loss /= self.cfg["runner"]["mini_epochs"]
             mean_entropy /= self.cfg["runner"]["mini_epochs"]
-            self.recorder.record_statistics(
-                {
+            stats = {
                     "value_loss": mean_value_loss,
                     "actor_loss": mean_actor_loss,
                     "bound_loss": mean_bound_loss,
@@ -286,8 +285,10 @@ class Runner:
                     "curriculum/mean_ang_vel_level": self.env.mean_ang_vel_level,
                     "curriculum/max_lin_vel_level": self.env.max_lin_vel_level,
                     "curriculum/max_ang_vel_level": self.env.max_ang_vel_level,
-                },
-                it,
+                }
+            if hasattr(self.env, "get_kick_metrics"):
+                stats.update(self.env.get_kick_metrics())
+            self.recorder.record_statistics(stats, it,
             )
 
             if (it + 1) % self.cfg["runner"]["save_interval"] == 0:
