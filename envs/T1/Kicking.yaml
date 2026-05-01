@@ -10,7 +10,7 @@ basic:
 
 env:
   num_envs: 1
-  num_observations: 46
+  num_observations: 47
   num_privileged_obs: 20
   num_actions: 12
   env_spacing: 5.  # not used with plane terrain
@@ -163,6 +163,7 @@ normalization:
   clip_actions: 1.
   ball_pos: 1.0
   target_dir: 1.0
+  target_z: 1.0
 
 noise:
   gravity:
@@ -343,6 +344,7 @@ rewards:
   ball_target_position: [6.0, 0.0] # Target position for ball to move toward (world frame, z should be ball radius)
   kick_target_angle_range_deg: [-15., 15.] # Range of kick target angles relative to robot forward [deg]
   kick_target_ref_distance: 8.0             # Distance from ball to target point for direction sampling [m]
+  kick_target_z_range: [0.05, 2.0]        # Range of target z height [m] (0.05=ground, 2.0=top of goal)
   lateral_error_ref_x: 3.0                  # X distance [m] at which lateral error is measured
   max_ball_vel_target_reward: 10.0      # Max reward for ball velocity toward target
   ball_vel_target_direction_sigma: 1.0 # Sigma for ball velocity toward target reward
