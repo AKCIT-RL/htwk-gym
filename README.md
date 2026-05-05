@@ -151,67 +151,199 @@ docker build -t htwk-gym .
 
 The build downloads and installs all dependencies (Isaac Gym, PyTorch, etc.) inside the container. This only needs to be done once (or after changing dependencies).
 
+> **Tip:** If W&B login hangs (network timeout), add `-e WANDB_MODE=offline` to train without cloud sync. Logs are saved locally and can be synced later with `wandb sync`.
+
+---
+
 ### Training (headless)
 
+Common flags for all training commands:
+- `--num_envs`: number of parallel environments (4096–6000 recommended for GPU training)
+- `--checkpoint`: path to a `.pth` file to resume from, or omit to train from scratch
+- `WANDB_API_KEY`: your W&B key, or set `WANDB_MODE=offline` to disable cloud sync
+
+#### T1 — Base Walk
+
+Trains the base bipedal locomotion policy (47-dim obs).
+
 ```sh
-docker run --rm --gpus all \
+docker build -t htwk-gym . && docker run -it --rm --gpus all \
+  --network host \
   -e WANDB_API_KEY=<your_key> \
   -v $(pwd)/logs:/app/logs \
+  -v $(pwd)/data:/app/data \
   -v $(pwd)/.gymtorch_cache:/root/.cache/torch_extensions \
   htwk-gym \
-  python3 train.py \
-    --task T1/Kicking \
-    --num_envs 6000 \
-    --headless True \
-    --sim_device cuda:0 \
-    --rl_device cuda:0
+  python3 train.py --task T1/Base_Walk \
+    --num_envs 4096 --headless True \
+    --sim_device cuda:0 --rl_device cuda:0
 ```
 
-- Replace `T1/Kicking` with any supported task (e.g. `T1/BaseWalk`).
-- Set `WANDB_MODE=disabled` to skip Weights & Biases logging.
-- Trained checkpoints are saved to `logs/` on the host via the volume mount.
-- The `.gymtorch_cache` volume avoids recompiling CUDA extensions on every run.
+Resume from checkpoint:
+```sh
+    --checkpoint logs/T1/T1/Base_Walk/<timestamp>/nn/model_<N>.pth
+```
+
+#### T1 — Base Walk Extended
+
+Extends Base Walk with a 52-dim obs space (adds ball/target slots, filled with zeros during walk training). Use as a bridge before fine-tuning Kicking_Movement.
+
+```sh
+docker build -t htwk-gym . && docker run -it --rm --gpus all \
+  --network host \
+  -e WANDB_API_KEY=<your_key> \
+  -v $(pwd)/logs:/app/logs \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/.gymtorch_cache:/root/.cache/torch_extensions \
+  htwk-gym \
+  python3 train.py --task T1/Base_Walk_Extended \
+    --num_envs 4096 --headless True \
+    --sim_device cuda:0 --rl_device cuda:0
+```
+
+Resume from checkpoint:
+```sh
+    --checkpoint logs/T1/T1/Base_Walk_Extended/<timestamp>/nn/model_<N>.pth
+```
+
+#### T1 — Kicking Movement
+
+Fine-tunes a walk-to-kick policy on top of Base_Walk_Extended (same 52-dim actor, critic re-initialised). Load the best Base_Walk_Extended checkpoint as starting point.
+
+```sh
+docker build -t htwk-gym . && docker run -it --rm --gpus all \
+  --network host \
+  -e WANDB_API_KEY=<your_key> \
+  -v $(pwd)/logs:/app/logs \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/.gymtorch_cache:/root/.cache/torch_extensions \
+  htwk-gym \
+  python3 train.py --task T1/Kicking_Movement \
+    --checkpoint logs/T1/T1/Base_Walk_Extended/<timestamp>/nn/model_<N>.pth \
+    --num_envs 4096 --headless True \
+    --sim_device cuda:0 --rl_device cuda:0
+```
+
+#### T1 — Parameter Walk
+
+```sh
+docker build -t htwk-gym . && docker run -it --rm --gpus all \
+  --network host \
+  -e WANDB_API_KEY=<your_key> \
+  -v $(pwd)/logs:/app/logs \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/.gymtorch_cache:/root/.cache/torch_extensions \
+  htwk-gym \
+  python3 train.py --task T1/Parameter_Walk \
+    --num_envs 4096 --headless True \
+    --sim_device cuda:0 --rl_device cuda:0
+```
+
+#### K1 — Parameter Walk
+
+```sh
+docker build -t htwk-gym . && docker run -it --rm --gpus all \
+  --network host \
+  -e WANDB_API_KEY=<your_key> \
+  -v $(pwd)/logs:/app/logs \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/.gymtorch_cache:/root/.cache/torch_extensions \
+  htwk-gym \
+  python3 train.py --task K1/Parameter_Walk \
+    --num_envs 4096 --headless True \
+    --sim_device cuda:0 --rl_device cuda:0
+```
+
+---
 
 ### Playing / Visualisation (with display)
 
+Allow the container to open a window on your host display:
+
 ```sh
 xhost +local:docker
-docker run --rm --gpus all \
-  -e DISPLAY=$DISPLAY \
-  -e WANDB_MODE=disabled \
-  -v /tmp/.X11-unix:/tmp/.X11-unix \
-  -v $(pwd)/logs:/app/logs \
-  -v $(pwd)/.gymtorch_cache:/root/.cache/torch_extensions \
-  htwk-gym \
-  python3 play.py \
-    --task T1/Kicking \
-    --checkpoint logs/T1/T1/Kicking/<timestamp>/nn/model_<N>.pth \
-    --num_envs 4 \
-    --sim_device cuda:0 \
-    --rl_device cuda:0
 ```
 
-Pass `--checkpoint=-1` to automatically load the most recent checkpoint.
+Common flags:
+- `--num_envs 4`: use a small number of envs for visual evaluation
+- `--checkpoint`: path to a specific `.pth` file, or `-1` for the most recent checkpoint
 
-### Collecting RSI states (for kicking initialisation)
-
-After training a walking policy, generate a Reference State Initialization buffer for the kicking task:
+#### T1 — Base Walk
 
 ```sh
-docker run --rm --gpus all \
+xhost +local:docker && docker run --rm --gpus all \
+  -e DISPLAY=$DISPLAY -e WANDB_MODE=disabled \
+  -v /tmp/.X11-unix:/tmp/.X11-unix \
   -v $(pwd)/logs:/app/logs \
+  -v $(pwd)/videos:/app/videos \
   -v $(pwd)/.gymtorch_cache:/root/.cache/torch_extensions \
   htwk-gym \
-  python3 collect_rsi_states.py \
+  python3 play.py --task T1/Base_Walk \
     --checkpoint logs/T1/T1/Base_Walk/<timestamp>/nn/model_<N>.pth \
-    --num_envs 1000 \
-    --num_steps 3000 \
-    --output logs/rsi_buffer.pt \
-    --sim_device cuda:0 \
-    --rl_device cuda:0
+    --num_envs 4 --headless False --sim_device cuda:0 --rl_device cuda:0
 ```
 
-The resulting `logs/rsi_buffer.pt` is automatically used by the kicking task when `rsi_buffer_path` is set in `Kicking.yaml`.
+#### T1 — Base Walk Extended
+
+```sh
+xhost +local:docker && docker run --rm --gpus all \
+  -e DISPLAY=$DISPLAY -e WANDB_MODE=disabled \
+  -v /tmp/.X11-unix:/tmp/.X11-unix \
+  -v $(pwd)/logs:/app/logs \
+  -v $(pwd)/videos:/app/videos \
+  -v $(pwd)/.gymtorch_cache:/root/.cache/torch_extensions \
+  htwk-gym \
+  python3 play.py --task T1/Base_Walk_Extended \
+    --checkpoint logs/T1/T1/Base_Walk_Extended/<timestamp>/nn/model_<N>.pth \
+    --num_envs 4 --headless False --sim_device cuda:0 --rl_device cuda:0
+```
+
+#### T1 — Kicking Movement
+
+```sh
+xhost +local:docker && docker run --rm --gpus all \
+  -e DISPLAY=$DISPLAY -e WANDB_MODE=disabled \
+  -v /tmp/.X11-unix:/tmp/.X11-unix \
+  -v $(pwd)/logs:/app/logs \
+  -v $(pwd)/videos:/app/videos \
+  -v $(pwd)/.gymtorch_cache:/root/.cache/torch_extensions \
+  htwk-gym \
+  python3 play.py --task T1/Kicking_Movement \
+    --checkpoint logs/T1/T1/Kicking_Movement/<timestamp>/nn/model_<N>.pth \
+    --num_envs 4 --headless False --sim_device cuda:0 --rl_device cuda:0
+```
+
+#### T1 — Parameter Walk
+
+```sh
+xhost +local:docker && docker run --rm --gpus all \
+  -e DISPLAY=$DISPLAY -e WANDB_MODE=disabled \
+  -v /tmp/.X11-unix:/tmp/.X11-unix \
+  -v $(pwd)/logs:/app/logs \
+  -v $(pwd)/videos:/app/videos \
+  -v $(pwd)/.gymtorch_cache:/root/.cache/torch_extensions \
+  htwk-gym \
+  python3 play.py --task T1/Parameter_Walk \
+    --checkpoint logs/T1/T1/Parameter_Walk/<timestamp>/nn/model_<N>.pth \
+    --num_envs 4 --headless False --sim_device cuda:0 --rl_device cuda:0
+```
+
+#### K1 — Parameter Walk
+
+```sh
+xhost +local:docker && docker run --rm --gpus all \
+  -e DISPLAY=$DISPLAY -e WANDB_MODE=disabled \
+  -v /tmp/.X11-unix:/tmp/.X11-unix \
+  -v $(pwd)/logs:/app/logs \
+  -v $(pwd)/videos:/app/videos \
+  -v $(pwd)/.gymtorch_cache:/root/.cache/torch_extensions \
+  htwk-gym \
+  python3 play.py --task K1/Parameter_Walk \
+    --checkpoint logs/K1/K1/Parameter_Walk/<timestamp>/nn/model_<N>.pth \
+    --num_envs 4 --headless False --sim_device cuda:0 --rl_device cuda:0
+```
+
+Pass `--checkpoint=-1` in any play command to automatically load the most recent checkpoint for that task.
 
 ---
 

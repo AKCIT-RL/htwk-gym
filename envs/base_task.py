@@ -132,10 +132,15 @@ class BaseTask:
                 camera_props.use_collision_geometry = False
                 self.camera = self.gym.create_camera_sensor(self.envs[self.cfg["viewer"]["record_env_idx"]], camera_props)
                 self.camera_frames = []
+            # root_states may be 2D (num_envs, 13) for single-actor envs or 3D
+            # (num_envs, num_actors, 13) for envs with extra actors (e.g. ball).
+            _rs = self.root_states
+            _idx = self.cfg["viewer"]["record_env_idx"]
+            _robot_root = _rs[_idx, 0, 0:3] if _rs.dim() == 3 else _rs[_idx, 0:3]
             cam_pos = gymapi.Vec3(
-                *(x + y for x, y in zip(self.root_states[self.cfg["viewer"]["record_env_idx"],0, 0:3].tolist(), self.cfg["viewer"]["pos"]))
+                *(x + y for x, y in zip(_robot_root.tolist(), self.cfg["viewer"]["pos"]))
             )
-            cam_target = gymapi.Vec3(*self.root_states[self.cfg["viewer"]["record_env_idx"], 0, 0:3].tolist())
+            cam_target = gymapi.Vec3(*_robot_root.tolist())
             self.gym.set_camera_location(self.camera, self.envs[self.cfg["viewer"]["record_env_idx"]], cam_pos, cam_target)
             self.gym.render_all_camera_sensors(self.sim)
             img = self.gym.get_camera_image(self.sim, self.envs[self.cfg["viewer"]["record_env_idx"]], self.camera, gymapi.IMAGE_COLOR)

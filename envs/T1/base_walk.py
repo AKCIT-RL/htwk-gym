@@ -578,19 +578,40 @@ class BaseWalk(BaseTask):
             [self.cfg["normalization"]["lin_vel"], self.cfg["normalization"]["lin_vel"], self.cfg["normalization"]["ang_vel"]],
             device=self.device,
         )
-        self.obs_buf = torch.cat(
-            (
-                apply_randomization(self.projected_gravity, self.cfg["noise"].get("gravity")) * self.cfg["normalization"]["gravity"],
-                apply_randomization(self.base_ang_vel, self.cfg["noise"].get("ang_vel")) * self.cfg["normalization"]["ang_vel"],
-                self.commands[:, :3] * commands_scale,
-                (torch.cos(2 * torch.pi * self.gait_process) * (self.gait_frequency > 1.0e-8).float()).unsqueeze(-1),
-                (torch.sin(2 * torch.pi * self.gait_process) * (self.gait_frequency > 1.0e-8).float()).unsqueeze(-1),
-                apply_randomization(self.dof_pos - self.default_dof_pos, self.cfg["noise"].get("dof_pos")) * self.cfg["normalization"]["dof_pos"],
-                apply_randomization(self.dof_vel, self.cfg["noise"].get("dof_vel")) * self.cfg["normalization"]["dof_vel"],
-                self.actions,
-            ),
-            dim=-1,
-        )
+
+        # Unified 52-obs layout (extended_obs: true):
+        #   0: 3  gravity
+        #   3: 6  ang_vel
+        #   6: 9  commands        ← real here, zeros in KickingMovement
+        #   9:11  gait cos/sin    ← real here, zeros in KickingMovement
+        #  11:13  ball_pos_xy     ← zeros here, real in KickingMovement
+        #  13:15  target_dir      ← zeros here, real in KickingMovement
+        #  15:16  target_z        ← zero  here, real in KickingMovement
+        #  16:28  dof_pos
+        #  28:40  dof_vel
+        #  40:52  actions
+        extended_obs = self.cfg["env"].get("extended_obs", False)
+
+        base_parts = [
+            apply_randomization(self.projected_gravity, self.cfg["noise"].get("gravity")) * self.cfg["normalization"]["gravity"],
+            apply_randomization(self.base_ang_vel, self.cfg["noise"].get("ang_vel")) * self.cfg["normalization"]["ang_vel"],
+            self.commands[:, :3] * commands_scale,
+            (torch.cos(2 * torch.pi * self.gait_process) * (self.gait_frequency > 1.0e-8).float()).unsqueeze(-1),
+            (torch.sin(2 * torch.pi * self.gait_process) * (self.gait_frequency > 1.0e-8).float()).unsqueeze(-1),
+        ]
+
+        if extended_obs:
+            # Slots 11:16 — ball/target info: zeros during BaseWalk training so
+            # the network learns locomotion while allocating capacity for kicking.
+            base_parts.append(torch.zeros(self.num_envs, 5, dtype=torch.float, device=self.device))
+
+        base_parts += [
+            apply_randomization(self.dof_pos - self.default_dof_pos, self.cfg["noise"].get("dof_pos")) * self.cfg["normalization"]["dof_pos"],
+            apply_randomization(self.dof_vel, self.cfg["noise"].get("dof_vel")) * self.cfg["normalization"]["dof_vel"],
+            self.actions,
+        ]
+
+        self.obs_buf = torch.cat(base_parts, dim=-1)
         self.privileged_obs_buf = torch.cat(
             (
                 self.base_mass_scaled,

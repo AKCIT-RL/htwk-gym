@@ -114,11 +114,14 @@ class Runner:
         parser.add_argument("--task", required=True, type=str, help="Name of the task to run.")
         parser.add_argument("--checkpoint", type=str, help="Path of the model checkpoint to load. Overrides config file if provided.")
         parser.add_argument("--num_envs", type=int, help="Number of environments to create. Overrides config file if provided.")
-        parser.add_argument("--headless", type=bool, help="Run headless without creating a viewer window. Overrides config file if provided.")
+        parser.add_argument("--headless", type=lambda x: x.lower() not in ('false', '0', 'no'), help="Run headless without creating a viewer window. Overrides config file if provided.")
         parser.add_argument("--sim_device", type=str, help="Device for physics simulation. Overrides config file if provided.")
         parser.add_argument("--rl_device", type=str, help="Device for the RL algorithm. Overrides config file if provided.")
         parser.add_argument("--seed", type=int, help="Random seed. Overrides config file if provided.")
         parser.add_argument("--max_iterations", type=int, help="Maximum number of training iterations. Overrides config file if provided.")
+        parser.add_argument("--play_command", type=str, default=None,
+                            help="Fixed velocity command for play mode as 'vx,vy,wz' (m/s, m/s, rad/s). "
+                                 "Overrides random commands. Example: --play_command 0.5,0,0")
         self.args = parser.parse_args()
 
     # Override config file with args if needed
@@ -126,9 +129,10 @@ class Runner:
         cfg_file = os.path.join("envs", "{}.yaml".format(self.args.task))
         with open(cfg_file, "r", encoding="utf-8") as f:
             self.cfg = yaml.load(f.read(), Loader=yaml.FullLoader)
+        _env_args = {"num_envs"}
         for arg in vars(self.args):
             if getattr(self.args, arg) is not None:
-                if arg == "num_envs":
+                if arg in _env_args:
                     self.cfg["env"][arg] = getattr(self.args, arg)
                 else:
                     self.cfg["basic"][arg] = getattr(self.args, arg)
@@ -173,15 +177,34 @@ class Runner:
                     self.cfg["basic"]["checkpoint"] = sorted(glob.glob(os.path.join("logs", "**/*.pth"), recursive=True), key=os.path.getmtime)[-1]
         print("Loading model from {}".format(self.cfg["basic"]["checkpoint"]))
         model_dict = torch.load(self.cfg["basic"]["checkpoint"], map_location=self.device, weights_only=True)
-        self.model.load_state_dict(model_dict["model"], strict=False)
+        # Filter out params whose shape does not match the current model (e.g. critic
+        # input dim changes when privileged_obs count differs between tasks). This
+        # allows cross-task transfer: actor weights load fully, mismatched critic
+        # weights are skipped and randomly re-initialised.
+        saved_state = model_dict["model"]
+        current_state = self.model.state_dict()
+        compatible = {
+            k: v for k, v in saved_state.items()
+            if k in current_state and current_state[k].shape == v.shape
+        }
+        skipped = [k for k in saved_state if k not in compatible]
+        if skipped:
+            print(f"[load] Skipping {len(skipped)} param(s) with shape mismatch: {skipped}")
+        self.model.load_state_dict(compatible, strict=False)
         try:
             self.env.curriculum_prob = model_dict["curriculum"]
         except Exception as e:
             print(f"Failed to load curriculum: {e}")
-        try:
-            self.optimizer.load_state_dict(model_dict["optimizer"])
-        except Exception as e:
-            print(f"Failed to load optimizer: {e}")
+        # Only restore optimizer state if no params were skipped — otherwise the
+        # optimizer's saved per-param tensors (exp_avg, exp_avg_sq) still have the
+        # OLD shape and will mismatch the freshly initialised critic head.
+        if skipped:
+            print(f"[load] Skipping optimizer state due to shape mismatch in: {skipped}")
+        else:
+            try:
+                self.optimizer.load_state_dict(model_dict["optimizer"])
+            except Exception as e:
+                print(f"Failed to load optimizer: {e}")
 
     def train(self):
         self.recorder = Recorder(self.cfg)
@@ -303,13 +326,31 @@ class Runner:
             print("epoch: {}/{}".format(it + 1, self.cfg["basic"]["max_iterations"]))
 
     def play(self):
+        # Parse fixed command if provided
+        fixed_command = None
+        if self.args.play_command is not None:
+            parts = [float(v) for v in self.args.play_command.split(",")]
+            fixed_command = torch.tensor(parts, dtype=torch.float, device=self.device)
+            print(f"[play] Fixed command: vx={parts[0]:.2f} m/s, vy={parts[1]:.2f} m/s, wz={parts[2]:.2f} rad/s")
+
         obs, infos = self.env.reset()
         obs = obs.to(self.device)
         if self.cfg["viewer"]["record_video"]:
             os.makedirs("videos", exist_ok=True)
             name = time.strftime("%Y-%m-%d-%H-%M-%S.mp4", time.localtime())
             record_time = self.cfg["viewer"]["record_interval"]
+        step = 0
         while True:
+            if fixed_command is not None:
+                self.env.commands[:, :len(fixed_command)] = fixed_command
+                # Recompute obs with the overridden command
+                self.env._compute_observations()
+                obs = self.env.obs_buf.to(self.device)
+            if step % 500 == 0:
+                cmds = self.env.commands[0].cpu().numpy()
+                cmd_str = ", ".join(f"{c:.2f}" for c in cmds)
+                print(f"[play] step={step} env0 commands=[{cmd_str}]")
+            step += 1
             with torch.no_grad():
                 dist = self.model.act(obs)
                 act = dist.loc

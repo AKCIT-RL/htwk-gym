@@ -34,6 +34,7 @@ class Recorder:
                 name=name,
                 notes=self.cfg["basic"]["description"],
                 config=self.cfg,
+                settings=wandb.Settings(init_timeout=120),
             )
 
         self.episode_statistics = {}
