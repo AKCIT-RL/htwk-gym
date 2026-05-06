@@ -589,7 +589,7 @@ class KickingMovement(BaseTask):
         robot_quat = self.root_states[env_ids_to_reset_ball, 0, 3:7]
 
         # Define forward vector in robot's local frame and repeat for each env
-        forward_vec_local = torch.tensor([1.0, 1.0, 0.0], device=self.device).unsqueeze(0).repeat(len(env_ids_to_reset_ball), 1)
+        forward_vec_local = torch.tensor([1.0, 0.0, 0.0], device=self.device).unsqueeze(0).repeat(len(env_ids_to_reset_ball), 1)
         
         # Rotate forward vector to world frame
         forward_vec_world = quat_rotate(robot_quat, forward_vec_local)
@@ -630,22 +630,6 @@ class KickingMovement(BaseTask):
                 gymtorch.unwrap_tensor(ball_actor_indices),
                 len(ball_actor_indices)
             )
-
-    def _sample_rsi(self, env_ids):
-        """Sample random walk states from the RSI dataset for the given envs.
-        Results are stored in self._rsi_sample and consumed by _reset_dofs /
-        _reset_root_states."""
-        n = len(env_ids)
-        idx = torch.randint(0, self._rsi_data["dof_pos"].shape[0], (n,), device=self.device)
-        self._rsi_sample = {
-            "dof_pos":           self._rsi_data["dof_pos"][idx],
-            "dof_vel":           self._rsi_data["dof_vel"][idx],
-            "base_quat":         self._rsi_data["base_quat"][idx],
-            "root_ang_vel":      self._rsi_data["root_ang_vel"][idx],
-            "base_lin_vel_local": self._rsi_data["base_lin_vel_local"][idx]
-                                   if "base_lin_vel_local" in self._rsi_data
-                                   else torch.zeros(n, 3, device=self.device),
-        }
 
     def _resample_kick_target(self, env_ids):
         """Sample a random kick target direction for the specified environments."""
@@ -803,9 +787,6 @@ class KickingMovement(BaseTask):
         self.torques /= self.cfg["control"]["decimation"]
         self.render()
 
-        # Store previous ball velocity in world frame *before* refreshing root states for current step
-        prev_ball_lin_vel_world = self.root_states[:, 1, 7:10].clone()
-
         # post physics step
         self.gym.refresh_actor_root_state_tensor(self.sim)
         self.gym.refresh_net_contact_force_tensor(self.sim)
@@ -889,14 +870,11 @@ class KickingMovement(BaseTask):
             self._reset_ball_at_robot_front(ball_only_reset_env_ids)
             # Update convenience tensors for the reset balls as _compute_observations will use them
             self.ball_pos[ball_only_reset_env_ids] = self.root_states[ball_only_reset_env_ids, 1, 0:3]
-            ball_quat_reset = self.root_states[ball_only_reset_env_ids, 1, 3:7]
-            self.ball_rot[ball_only_reset_env_ids] = ball_quat_reset
-            # Velocities in root_states are world, convert to local for convenience tensors
-            world_lin_vel_reset = self.root_states[ball_only_reset_env_ids, 1, 7:10]
-            world_ang_vel_reset = self.root_states[ball_only_reset_env_ids, 1, 10:13]
-            self.ball_lin_vel[ball_only_reset_env_ids] = quat_rotate_inverse(ball_quat_reset, world_lin_vel_reset)
-            self.ball_ang_vel[ball_only_reset_env_ids] = quat_rotate_inverse(ball_quat_reset, world_ang_vel_reset)
-            
+            self.ball_rot[ball_only_reset_env_ids] = self.root_states[ball_only_reset_env_ids, 1, 3:7]
+            # ball_lin_vel / ball_ang_vel are views of body_states (world frame) — zero after reset
+            self.ball_lin_vel[ball_only_reset_env_ids] = 0.0
+            self.ball_ang_vel[ball_only_reset_env_ids] = 0.0
+
             self.reset_ball_buf[ball_only_reset_env_ids] = False
 
         self._compute_reward()
