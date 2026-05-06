@@ -1,11 +1,6 @@
 import os
 
 from isaacgym import gymtorch, gymapi
-
-assert gymtorch
-
-# Import torch and torch_utils after isaacgym modules are initialized
-import torch
 from isaacgym.torch_utils import (
     get_axis_params,
     to_torch,
@@ -15,6 +10,10 @@ from isaacgym.torch_utils import (
     get_euler_xyz,
     quat_rotate,
 )
+
+assert gymtorch
+
+import torch
 
 import numpy as np
 from envs.base_task import BaseTask
