@@ -300,19 +300,19 @@ rewards:
     lin_vel_z: -1.5
     ang_vel_xy: -0.1
     dof_vel: -1.e-4
-    dof_acc: -1.e-7
-    root_acc: -1.e-5
-    action_rate: -1.5
+    dof_acc: -5.e-7
+    root_acc: -5.e-5
+    action_rate: -5.0
     dof_pos_limits: -1
     feet_slip: -1
     feet_yaw_diff: -3.
     feet_yaw_mean: -3.
     feet_roll: -0.3
-    ball_velocity_target_direction: 20
+    ball_velocity_target_direction: 12
     kicking_foot_approach_ball_stationary: 5
     body_alignment_for_kick: 1.5
     body_angle: 0.1
-    ball_acceleration: 15.0
+    ball_acceleration: 8.0
     waiting: -2.0
   ball_rolling_scale:
     waiting: 0.0
