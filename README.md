@@ -79,6 +79,19 @@ HTWK Gym supports multiple humanoid robot platforms with specialized task config
 - **Use Case**: Soccer-like behaviors and object manipulation
 - **Configuration**: `envs/T1/Kicking.yaml`
 
+#### 4. DribbleMaster (`T1/Dribble_Master_Stage1`, `T1/Dribble_Master_Stage2`)
+- **Description**: Two-stage curriculum learning for agile humanoid soccer dribbling ([paper](https://arxiv.org/abs/2505.12679v3))
+- **Features**:
+  - 14-DOF action space (12 legs + 2 head joints for active sensing)
+  - Virtual camera model simulating RealSense D455 FOV
+  - Ball velocity commands (vx, vy) in global frame
+  - Active sensing: robot learns to move head to track ball
+  - Stage 1: locomotion + ball chasing (wide FOV, ball far)
+  - Stage 2: dribbling fine-tuning (real FOV, ball close)
+  - 39-dimensional observation space with 20 privileged observations
+- **Use Case**: Agile soccer dribbling with continuous ball control
+- **Configurations**: `envs/T1/Dribble_Master_Stage1.yaml`, `envs/T1/Dribble_Master_Stage2.yaml`
+
 ### K1 Robot Platform
 
 #### 1. ParameterWalk (`K1/ParameterWalk`)
@@ -254,6 +267,53 @@ docker build -t htwk-gym . && docker run -it --rm --gpus all \
     --sim_device cuda:0 --rl_device cuda:0
 ```
 
+#### T1 — Dribble Master (Two-Stage Curriculum)
+
+Based on the [Dribble Master paper](https://arxiv.org/abs/2505.12679v3) (ICRA 2026). Uses a 14-DOF action space (12 legs + 2 head joints), virtual camera model, and ball velocity commands.
+
+**Stage 1 — Locomotion + Ball Chasing** (train from scratch):
+```sh
+docker build -t htwk-gym . && docker run -it --rm --gpus all \
+  --network host \
+  -e WANDB_API_KEY=<your_key> \
+  -v $(pwd)/logs:/app/logs \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/.gymtorch_cache:/root/.cache/torch_extensions \
+  htwk-gym \
+  python3 train.py --task T1/Dribble_Master_Stage1 \
+    --num_envs 4096 --headless True \
+    --sim_device cuda:0 --rl_device cuda:0
+```
+
+**Stage 2 — Dribbling Fine-tuning** (load Stage 1 checkpoint):
+```sh
+docker build -t htwk-gym . && docker run -it --rm --gpus all \
+  --network host \
+  -e WANDB_API_KEY=<your_key> \
+  -v $(pwd)/logs:/app/logs \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/.gymtorch_cache:/root/.cache/torch_extensions \
+  htwk-gym \
+  python3 train.py --task T1/Dribble_Master_Stage2 \
+    --checkpoint logs/T1/T1/Dribble_Master_Stage1/<timestamp>/nn/model_<N>.pth \
+    --num_envs 4096 --headless True \
+    --sim_device cuda:0 --rl_device cuda:0
+```
+
+**Validation tests** (run before training to catch config/code errors):
+```sh
+# CPU-only tests (no GPU needed — tests YAML, URDF, model, registration):
+docker build -t htwk-gym . && docker run -it --rm \
+  htwk-gym \
+  python3 tests/test_dribble_master.py
+
+# Full tests with GPU (adds sim smoke test + training loop):
+docker build -t htwk-gym . && docker run -it --rm --gpus all \
+  -v $(pwd)/.gymtorch_cache:/root/.cache/torch_extensions \
+  htwk-gym \
+  python3 tests/test_dribble_master.py
+```
+
 ---
 
 ### Playing / Visualisation (with display)
@@ -310,6 +370,21 @@ xhost +local:docker && docker run --rm --gpus all \
   htwk-gym \
   python3 play.py --task T1/Kicking_Movement \
     --checkpoint logs/T1/T1/Kicking_Movement/<timestamp>/nn/model_<N>.pth \
+    --num_envs 4 --headless False --sim_device cuda:0 --rl_device cuda:0
+```
+
+#### T1 — Dribble Master
+
+```sh
+xhost +local:docker && docker run --rm --gpus all \
+  -e DISPLAY=$DISPLAY -e WANDB_MODE=disabled \
+  -v /tmp/.X11-unix:/tmp/.X11-unix \
+  -v $(pwd)/logs:/app/logs \
+  -v $(pwd)/videos:/app/videos \
+  -v $(pwd)/.gymtorch_cache:/root/.cache/torch_extensions \
+  htwk-gym \
+  python3 play.py --task T1/Dribble_Master_Stage2 \
+    --checkpoint logs/T1/T1/Dribble_Master_Stage2/<timestamp>/nn/model_<N>.pth \
     --num_envs 4 --headless False --sim_device cuda:0 --rl_device cuda:0
 ```
 

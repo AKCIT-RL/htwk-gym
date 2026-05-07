@@ -4,26 +4,33 @@ import torch.nn.functional as F
 
 class ActorCritic(torch.nn.Module):
 
-    def __init__(self, num_act, num_obs, num_privileged_obs):
+    def __init__(self, num_act, num_obs, num_privileged_obs,
+                 actor_hidden_dims=None, critic_hidden_dims=None):
         super().__init__()
-        self.critic = torch.nn.Sequential(
-            torch.nn.Linear(num_obs + num_privileged_obs, 256),
-            torch.nn.ELU(),
-            torch.nn.Linear(256, 256),
-            torch.nn.ELU(),
-            torch.nn.Linear(256, 128),
-            torch.nn.ELU(),
-            torch.nn.Linear(128, 1),
-        )
-        self.actor = torch.nn.Sequential(
-            torch.nn.Linear(num_obs, 256),
-            torch.nn.ELU(),
-            torch.nn.Linear(256, 128),
-            torch.nn.ELU(),
-            torch.nn.Linear(128, 128),
-            torch.nn.ELU(),
-            torch.nn.Linear(128, num_act),
-        )
+        if actor_hidden_dims is None:
+            actor_hidden_dims = [256, 128, 128]
+        if critic_hidden_dims is None:
+            critic_hidden_dims = [256, 256, 128]
+
+        # Build critic
+        critic_layers = []
+        critic_in = num_obs + num_privileged_obs
+        for h in critic_hidden_dims:
+            critic_layers.append(torch.nn.Linear(critic_in, h))
+            critic_layers.append(torch.nn.ELU())
+            critic_in = h
+        critic_layers.append(torch.nn.Linear(critic_in, 1))
+        self.critic = torch.nn.Sequential(*critic_layers)
+
+        # Build actor
+        actor_layers = []
+        actor_in = num_obs
+        for h in actor_hidden_dims:
+            actor_layers.append(torch.nn.Linear(actor_in, h))
+            actor_layers.append(torch.nn.ELU())
+            actor_in = h
+        actor_layers.append(torch.nn.Linear(actor_in, num_act))
+        self.actor = torch.nn.Sequential(*actor_layers)
         self.logstd = torch.nn.parameter.Parameter(torch.full((1, num_act), fill_value=-2.0), requires_grad=True)
 
     def act(self, obs):

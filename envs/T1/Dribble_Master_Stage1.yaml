@@ -1,0 +1,315 @@
+# DribbleMaster Stage 1 – Locomotion + Ball Chasing
+# Ball starts far away, wide FOV (2×), no ball_velocity_tracking reward.
+# Focus: learn to walk, chase ball, keep ball in FOV.
+basic:
+  checkpoint: null
+  headless: false
+  max_iterations: 10000
+  sim_device: "cuda:0"
+  rl_device: "cuda:0"
+  seed: -1
+  description: "DribbleMaster Stage1 – locomotion + ball chasing"
+  enable_csv_logging: false
+
+env:
+  num_envs: 4096
+  num_observations: 39
+  num_privileged_obs: 20
+  num_actions: 14   # 12 leg DOFs + 2 head DOFs
+  env_spacing: 5.
+
+runner:
+  horizon_length: 24
+  mini_epochs: 20
+  save_interval: 100
+  use_wandb: true
+
+model:
+  actor_hidden_dims: [512, 256, 128]
+  critic_hidden_dims: [768, 256, 128]
+
+viewer:
+  pos: [3., -3., 2.]
+  lookat: [15., 0., 0.]
+  record_video: true
+  record_interval: 5.
+  record_env_idx: 0
+
+algorithm:
+  learning_rate: 1.e-4
+  gamma: 0.994          # from paper
+  lam: 0.95
+  bound_coef: 1.0
+  entropy_coef: -0.01
+  symmetric_coef: 10.
+  desired_kl: 0.01
+
+sim:
+  dt: 0.002
+  substeps: 1
+  up_axis: "z"
+  gravity: [0.0, 0.0, -9.81]
+  physics_engine: "physx"
+  physx:
+    num_threads: 4
+    solver_type: 1
+    num_position_iterations: 4
+    num_velocity_iterations: 1
+    contact_offset: 0.02
+    rest_offset: 0.0
+    bounce_threshold_velocity: 0.2
+    max_depenetration_velocity: 100.0
+    default_buffer_size_multiplier: 5.0
+    max_gpu_contact_pairs: 8388608
+    num_subscenes: 4
+    contact_collection: 1
+
+asset:
+  file: "resources/T1/T1_dribble.urdf"
+  mujoco_file: "resources/T1/T1_locomotion.xml"
+  name: "T1"
+  base_name: "Trunk"
+  foot_names: ["left_foot_link", "right_foot_link"]
+  head_link: "H2"     # camera mounted on the pitch link
+  disable_gravity: false
+  default_dof_drive_mode: 3
+  collapse_fixed_joints: true
+  fix_base_link: false
+  self_collisions: 0
+  replace_cylinder_with_capsule: true
+  flip_visual_attachments: false
+  density: 0.001
+  angular_damping: 0.
+  linear_damping: 0.
+  max_angular_velocity: 1000.
+  max_linear_velocity: 1000.
+  armature: 0.
+  thickness: 0.01
+  feet_edge_pos: [[ 0.1215,  0.05, -0.03],
+                  [ 0.1215, -0.05, -0.03],
+                  [-0.1015,  0.05, -0.03],
+                  [-0.1015, -0.05, -0.03]]
+
+ball:
+  file: "resources/T1/ball.urdf"
+  name: "ball"
+  init_pos: [0.3, 0.0, 0.05]
+  init_rot: [0.0, 0.0, 0.0, 1.0]
+  init_lin_vel: [0.0, 0.0, 0.0]
+  init_ang_vel: [0.0, 0.0, 0.0]
+  restitution: 0.3
+  friction: 0.8
+  rolling_friction: 0.5
+  contact_offset: 0.005
+  density: 0.001
+  thickness: 0.01
+  # Stage 1: ball spawns far (8-12m) so robot learns locomotion
+  init_distance_range: [8.0, 12.0]
+
+init_state:
+  pos: [0.0, 0.0, 0.72]
+  rot: [0.0, 0.0, 0.0, 1.0]
+  lin_vel: [0.0, 0.0, 0.0]
+  ang_vel: [0.0, 0.0, 0.0]
+  default_joint_angles: {
+    "Hip_Pitch": -0.2, "Knee_Pitch": 0.4, "Ankle_Pitch": -0.25,
+    "AAHead_yaw": 0.0, "Head_pitch": 0.0,
+    "default": 0.
+  }
+
+control:
+  stiffness: {"Hip": 200., "Knee": 200., "Ankle": 50., "Head": 40.}
+  damping: {"Hip": 5., "Knee": 5., "Ankle": 1., "Head": 2.}
+  action_scale: 1.
+  decimation: 10
+
+terrain:
+  type: "plane"
+  static_friction: 1.0
+  dynamic_friction: 1.0
+  restitution: 0.
+
+# Virtual camera model — Stage 1 uses 2× real FOV for easier learning
+virtual_camera:
+  hfov_deg: 174.0     # 2× real (87°)
+  vfov_deg: 116.0     # 2× real (58°)
+  history_s: 0.3       # freeze ball obs for 0.3s when out of FOV
+
+commands:
+  num_commands: 0
+  ball_vel_range: [-1.5, 1.5]         # target ball velocity range [m/s]
+  resampling_time_s: [3.0, 5.0]       # resample every 3-5s
+  gait_frequency: [1.5, 2.5]          # Hz — gait clock frequency range
+
+normalization:
+  gravity: 1.0
+  lin_vel: 1.0
+  ang_vel: 1.0
+  dof_pos: 1.0
+  dof_vel: 0.1
+  filter_weight: 0.1
+  push_force: 0.1
+  push_torque: 0.5
+  clip_actions: 1.
+  ball_pos: 1.0
+  ball_vel_cmd: 1.0
+
+noise:
+  gravity:
+    range: [0., 0.01]
+    operation: "additive"
+    distribution: "gaussian"
+  orientation:
+    range: [0., 0.02]
+    operation: "additive"
+    distribution: "gaussian"
+  lin_vel:
+    range: [0., 0.05]
+    operation: "additive"
+    distribution: "gaussian"
+  ang_vel:
+    range: [0., 0.1]
+    operation: "additive"
+    distribution: "gaussian"
+  dof_pos:
+    range: [0., 0.01]
+    operation: "additive"
+    distribution: "gaussian"
+  dof_vel:
+    range: [0., 0.1]
+    operation: "additive"
+    distribution: "gaussian"
+  height:
+    range: [0., 0.02]
+    operation: "additive"
+    distribution: "gaussian"
+  ball_pos:
+    range: [-0.01, 0.01]
+    operation: "additive"
+    distribution: "gaussian"
+
+randomization:
+  init_dof_pos:
+    range: [0., 0.05]
+    operation: "additive"
+    distribution: "gaussian"
+  init_base_pos_xy:
+    range: [-1., 1.]
+    operation: "additive"
+    distribution: "uniform"
+  init_base_lin_vel_xy:
+    range: [0., 0.1]
+    operation: "additive"
+    distribution: "gaussian"
+  init_base_ang:
+    range: [-0.1, 0.1]
+    operation: "additive"
+    distribution: "gaussian"
+
+  kick_interval_s: 2.
+  kick_lin_vel:
+    range: [0., 0.3]
+    operation: "additive"
+    distribution: "gaussian"
+  kick_ang_vel:
+    range: [0., 0.1]
+    operation: "additive"
+    distribution: "gaussian"
+
+  push_interval_s: 5.
+  push_duration_s: 1.
+  push_force:
+    range: [0., 20.]
+    operation: "additive"
+    distribution: "gaussian"
+  push_torque:
+    range: [0., 5.]
+    operation: "additive"
+    distribution: "gaussian"
+
+  # Domain randomization from paper (Sec III.C)
+  dof_stiffness:
+    range: [0.7, 1.3]
+    operation: "scaling"
+    distribution: "uniform"
+  dof_damping:
+    range: [0.8, 1.2]
+    operation: "scaling"
+    distribution: "uniform"
+  dof_friction:
+    range: [0.0, 2.0]
+    operation: "additive"
+    distribution: "uniform"
+
+  friction:
+    range: [0.5, 1.5]
+    operation: "additive"
+    distribution: "uniform"
+  compliance:
+    range: [0.5, 1.5]
+    operation: "additive"
+    distribution: "uniform"
+  restitution:
+    range: [0.1, 0.9]
+    operation: "additive"
+    distribution: "uniform"
+
+  base_com:
+    range: [-0.04, 0.04]
+    operation: "additive"
+    distribution: "uniform"
+  base_mass:
+    range: [-2., 2.]
+    operation: "additive"
+    distribution: "uniform"
+  other_com:
+    range: [-0.005, 0.005]
+    operation: "additive"
+    distribution: "uniform"
+  other_mass:
+    range: [0.98, 1.02]
+    operation: "scaling"
+    distribution: "uniform"
+
+rewards:
+  scales:
+    # --- Locomotion ---
+    survival: 2.0
+    base_height: -200.
+    orientation: -20.
+    torques: -2.e-4
+    torque_tiredness: -1.e-2
+    power: -2.e-3
+    lin_vel_z: -1.5
+    ang_vel_xy: -0.1
+    dof_vel: -1.e-4
+    dof_acc: -1.e-7
+    root_acc: -1.e-5
+    action_rate: -1.5
+    dof_pos_limits: -1.
+    feet_slip: -1.
+    feet_yaw_diff: -3.
+    feet_yaw_mean: -3.
+    feet_roll: -0.3
+    collision: -10.
+    # --- Gait ---
+    gait_symmetry: 2.0
+    # --- Ball chasing ---
+    ball_distance: -5.0         # penalty proportional to distance
+    ball_velocity_tracking: 0.  # disabled in Stage 1
+    ball_velocity_direction: 0. # disabled in Stage 1
+    # --- Active sensing ---
+    ball_in_fov: 3.0
+    head_action_rate: -0.5
+
+  episode_length_s: 30.      # longer episodes for locomotion learning
+  terminate_height: 0.45
+  terminate_vel: 50.
+  terminate_contacts_on: []
+  penalize_contacts_on: ["Trunk", "H1", "H2", "AL", "AR", "Waist", "Hip", "Shank", "Ankle"]
+  only_positive_rewards: false
+  base_height_target: 0.68
+  soft_dof_pos_limit: 1.
+  gait_ref_amplitude: 0.2
+  gait_tracking_sigma: 0.1
+  ball_vel_tracking_sigma: 0.5

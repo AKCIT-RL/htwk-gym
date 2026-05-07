@@ -97,7 +97,12 @@ class Runner:
 
         self.device = self.cfg["basic"]["rl_device"]
         self.learning_rate = self.cfg["algorithm"]["learning_rate"]
-        self.model = ActorCritic(self.env.num_actions, self.env.num_obs, self.env.num_privileged_obs).to(self.device)
+        actor_hidden_dims = self.cfg.get("model", {}).get("actor_hidden_dims", None)
+        critic_hidden_dims = self.cfg.get("model", {}).get("critic_hidden_dims", None)
+        self.model = ActorCritic(
+            self.env.num_actions, self.env.num_obs, self.env.num_privileged_obs,
+            actor_hidden_dims=actor_hidden_dims, critic_hidden_dims=critic_hidden_dims,
+        ).to(self.device)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate)
         self._load()
 
