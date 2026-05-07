@@ -285,12 +285,12 @@ randomization:
 
 rewards:
   scales:
-    survival: 0.15
+    survival: 1.0
     # Tracking rewards re-enabled: command is now auto-computed toward the ball
     # by _update_commands_toward_ball(), so these rewards incentivise the robot
     # to actually walk toward the ball using the locomotion it learned in BaseWalk.
-    tracking_lin_vel_x: 1.0
-    tracking_lin_vel_y: 0.5
+    tracking_lin_vel_x: 2.0
+    tracking_lin_vel_y: 1.0
     tracking_ang_vel: 0.2
     base_height: -200.
     orientation: -20
@@ -302,18 +302,18 @@ rewards:
     dof_vel: -1.e-4
     dof_acc: -1.e-7
     root_acc: -1.e-5
-    action_rate: -0.5
+    action_rate: -1.5
     dof_pos_limits: -1
     feet_slip: -1
     feet_yaw_diff: -3.
     feet_yaw_mean: -3.
     feet_roll: -0.3
-    ball_velocity_target_direction: 10
-    kicking_foot_approach_ball_stationary: 10
-    body_alignment_for_kick: 0.5
+    ball_velocity_target_direction: 20
+    kicking_foot_approach_ball_stationary: 5
+    body_alignment_for_kick: 1.5
     body_angle: 0.1
-    ball_acceleration: 0.25
-    waiting: -1.0
+    ball_acceleration: 15.0
+    waiting: -2.0
   ball_rolling_scale:
     waiting: 0.0
     survival: 0.5
@@ -342,9 +342,10 @@ rewards:
   kick_target_ref_distance: 8.0             # Distance from ball to target point for direction sampling [m]
   kick_target_z_range: [0.05, 2.0]        # Range of target z height [m] (0.05=ground, 2.0=top of goal)
   lateral_error_ref_x: 3.0                  # X distance [m] at which lateral error is measured
-  max_ball_vel_target_reward: 10.0      # Max reward for ball velocity toward target
+  max_ball_vel_target_reward: 15.0      # Max reward for ball velocity toward target
   ball_vel_target_direction_sigma: 1.0 # Sigma for ball velocity toward target reward
-  ball_velocity_decay_time: 0.1 # Time constant in seconds for ball velocity decay
+  ball_velocity_decay_time: 0.2 # Time constant in seconds — short to focus on kick impact moment
+  min_ball_vel_for_kick_reward: 1.0 # Minimum ball speed (m/s) — ignores accidental touches
 
   kicking_foot_index: 0                # 0 for left_foot_link, 1 for right_foot_link
   # kick_velocity_threshold: 0.2         # Min change in ball speed (m/s) to be a kick event
@@ -354,7 +355,7 @@ rewards:
   # Parameters for _reward_kicking_foot_approach_ball_stationary
   ball_stationary_speed_threshold: 0.1 # Max ball speed (m/s) to be considered stationary
   approach_proximity_sigma: 0.3        # Sigma for proximity reward — tighter than before (1.5) to force precise foot placement near ball
-  max_approach_reward: 50.0             # Max reward for kicking_foot_approach_ball_stationary
+  max_approach_reward: 5.0              # Max reward for kicking_foot_approach_ball_stationary (capped to prevent domination)
 
   kick_target_pos_world: [5.0, 0.0, 0.05] # Target position for body alignment (world frame, z should be ball radius)
   alignment_to_ball_sigma: 0.5         # Sigma for robot-to-ball alignment
@@ -373,7 +374,7 @@ rewards:
   max_ball_moving_time_s: 5
 
   # Parameters for ball acceleration reward
-  ball_acceleration_scale: 80.0        # Scaling factor for acceleration towards target
+  ball_acceleration_scale: 5.0         # Scaling factor for acceleration towards target (lower = tanh saturates faster)
   max_ball_acceleration_reward: 80.0    # Maximum reward for ball acceleration towards target
 
   # Parameters for _update_commands_toward_ball (Option-3 auto-command)

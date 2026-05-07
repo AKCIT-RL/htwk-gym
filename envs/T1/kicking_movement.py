@@ -1312,20 +1312,23 @@ class KickingMovement(BaseTask):
         # Project ball velocity onto the 3D target direction
         velocity_towards_target = torch.sum(ball_vel_3d * ball_to_target_normalized, dim=-1)
         
-        # Reward only positive velocity towards the target
-        # Using an exponential function for a smoother reward landscape
-        sigma = self.cfg["rewards"].get("ball_vel_target_direction_sigma", 1.0)
-        base_reward = velocity_towards_target
+        # Only reward above a minimum velocity threshold (ignores accidental touches)
+        min_vel = self.cfg["rewards"].get("min_ball_vel_for_kick_reward", 1.0)
+        velocity_above_threshold = torch.clamp(velocity_towards_target - min_vel, min=0.0)
+        
+        # Cubic reward: disproportionately rewards stronger kicks
+        # 3 m/s → 8.0, 2 m/s → 1.0, 1.5 m/s → 0.125 (ratio 64x between 3 and 1.5)
+        base_reward = velocity_above_threshold ** 3
         
         # Add decay factor based on how long the ball has been moving
-        decay_time_constant = self.cfg["rewards"].get("ball_velocity_decay_time", 2.0)  # Time constant in seconds
+        decay_time_constant = self.cfg["rewards"].get("ball_velocity_decay_time", 0.2)
         decay_factor = torch.exp(-self.time_since_ball_is_moving_buf / decay_time_constant)
         
         # Apply decay to the reward
         reward = base_reward * decay_factor
         
         # Clamp the reward to avoid excessively large values
-        max_reward = self.cfg["rewards"].get("max_ball_vel_target_reward", 5.0)
+        max_reward = self.cfg["rewards"].get("max_ball_vel_target_reward", 15.0)
         
         return torch.clamp(reward, min=0.0, max=max_reward)
 
@@ -1344,12 +1347,15 @@ class KickingMovement(BaseTask):
 
         foot_ball_dist = torch.min(foot_ball_dist_left, foot_ball_dist_right)
 
-        # Proximity reward (existing)
+        # Proximity reward
         proximity_sigma = self.cfg["rewards"].get("approach_proximity_sigma", 0.1)
         proximity_value = torch.exp(-foot_ball_dist / proximity_sigma) 
         
-        # Only give reward if the ball is stationary
-        reward = proximity_value
+        # Only give reward if the ball is actually stationary
+        ball_speed = torch.norm(self.root_states[:, 1, 7:10], dim=-1)
+        ball_stationary_threshold = self.cfg["rewards"].get("ball_stationary_speed_threshold", 0.1)
+        ball_is_stationary = (ball_speed < ball_stationary_threshold).float()
+        reward = proximity_value * ball_is_stationary
 
         max_reward = self.cfg["rewards"].get("max_approach_reward", 2.0)
         return torch.clamp(reward, min=0.0, max=max_reward)
