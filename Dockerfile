@@ -85,8 +85,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Volume para persistir logs de treino fora do container
-VOLUME ["/app/logs"]
+# Logs are persisted via bind mount: -v $(pwd)/logs:/app/logs
 
 # --- Estágio 5: Comando de Execução ---
 # Padrão: bash interativo. Para treinar, passe o comando explicitamente.
