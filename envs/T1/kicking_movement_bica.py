@@ -22,7 +22,7 @@ from envs.base_task import BaseTask
 from utils.utils import apply_randomization
 
 
-class KickingMovement(BaseTask):
+class KickingMovementBica(BaseTask):
 
     def __init__(self, cfg):
         super().__init__(cfg)
@@ -336,6 +336,7 @@ class KickingMovement(BaseTask):
         self.pushing_forces = torch.zeros(self.num_envs, self.num_bodies + 1, 3, dtype=torch.float, device=self.device)
         self.pushing_torques = torch.zeros(self.num_envs, self.num_bodies + 1, 3, dtype=torch.float, device=self.device)
         self.feet_roll = torch.zeros(self.num_envs, len(self.feet_indices), dtype=torch.float, device=self.device)
+        self.feet_pitch = torch.zeros(self.num_envs, len(self.feet_indices), dtype=torch.float, device=self.device)
         self.feet_yaw = torch.zeros(self.num_envs, len(self.feet_indices), dtype=torch.float, device=self.device)
         self.last_feet_pos = torch.zeros_like(self.feet_pos)
         self.feet_contact = torch.zeros(self.num_envs, len(self.feet_indices), dtype=torch.bool, device=self.device)
@@ -353,6 +354,16 @@ class KickingMovement(BaseTask):
         self.last_ball_lin_vel_world = torch.zeros_like(self.body_states[:, -1, 7:10]) # World frame
         self.kick_target_pos_world = torch.zeros(self.num_envs, 3, dtype=torch.float, device=self.device)
         self.kick_detected = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        # True for exactly one step: the step on which kick_detected first flipped True.
+        # Used by Chapa subclass for single-shot impact-pose reward; ignored by Bica rewards.
+        self.kick_just_detected = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        # Snapshot of pose-at-impact (used by Chapa). Index 0 = unset; rewards that read it
+        # must gate on kick_just_detected / kick_detected.
+        self.kick_foot_idx_at_impact = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
+        self.kick_foot_pitch_at_impact = torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+        self.kick_foot_roll_at_impact = torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
+        # Ball position expressed in the kicking foot's local frame at the impact step.
+        self.kick_ball_local_at_impact = torch.zeros(self.num_envs, 3, dtype=torch.float, device=self.device)
         self.angular_error_at_kick = torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
         self.z_error_at_kick = torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
         self.ball_crossed_ref = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
@@ -361,6 +372,12 @@ class KickingMovement(BaseTask):
         self._kick_angular_errors_log: list = []
         self._kick_z_errors_log: list = []
         self._kick_lateral_errors_log: list = []
+        # Chapa pose-at-impact accumulators (populated only when kick_detected on reset)
+        self._kick_foot_pitch_log: list = []
+        self._kick_foot_roll_log: list = []
+        self._kick_ball_x_local_log: list = []
+        self._kick_ball_y_local_log: list = []
+        self._kick_ball_z_local_log: list = []
 
     def _prepare_reward_function(self):
         """Prepares a list of reward functions, whcih will be called to compute the total reward.
@@ -512,6 +529,23 @@ class KickingMovement(BaseTask):
                 self._kick_angular_errors_log.append(v)
             for v in self.z_error_at_kick[env_ids][kick_success_mask].cpu().tolist():
                 self._kick_z_errors_log.append(v)
+            # Chapa pose-at-impact: log absolute pitch/roll and local-frame ball offset.
+            kicked_idx = env_ids[kick_success_mask]
+            pitch_at_impact = self.kick_foot_pitch_at_impact[kicked_idx]
+            roll_at_impact = self.kick_foot_roll_at_impact[kicked_idx]
+            ball_local = self.kick_ball_local_at_impact[kicked_idx]
+            self.extras["foot_pitch_at_impact_abs"] = torch.abs(pitch_at_impact).mean()
+            self.extras["contact_x_local_abs"] = torch.abs(ball_local[:, 0]).mean()
+            for v in torch.abs(pitch_at_impact).cpu().tolist():
+                self._kick_foot_pitch_log.append(v)
+            for v in torch.abs(roll_at_impact).cpu().tolist():
+                self._kick_foot_roll_log.append(v)
+            for v in ball_local[:, 0].cpu().tolist():
+                self._kick_ball_x_local_log.append(v)
+            for v in ball_local[:, 1].cpu().tolist():
+                self._kick_ball_y_local_log.append(v)
+            for v in ball_local[:, 2].cpu().tolist():
+                self._kick_ball_z_local_log.append(v)
 
         crossed_mask = self.ball_crossed_ref[env_ids]
         if crossed_mask.any():
@@ -525,6 +559,12 @@ class KickingMovement(BaseTask):
         self.z_error_at_kick[env_ids] = 0.0
         self.ball_crossed_ref[env_ids] = False
         self.ball_ref_y_error[env_ids] = 0.0
+        # Clear pose-at-impact snapshot buffers used by the Chapa subclass.
+        self.kick_just_detected[env_ids] = False
+        self.kick_foot_idx_at_impact[env_ids] = 0
+        self.kick_foot_pitch_at_impact[env_ids] = 0.0
+        self.kick_foot_roll_at_impact[env_ids] = 0.0
+        self.kick_ball_local_at_impact[env_ids] = 0.0
 
         # Continue with existing reset code...
         self.last_dof_targets[env_ids] = self.dof_pos[env_ids]
@@ -682,6 +722,34 @@ class KickingMovement(BaseTask):
             metrics["kick/lateral_error_m_mean"] = sum(lat) / len(lat)
             metrics["kick/fraction_reached_ref_line"] = float(len(lat)) / max(float(self.env_resets), 1.0)
             self._kick_lateral_errors_log = []
+        # Chapa pose-at-impact metrics: useful for both Bica (baseline) and Chapa (target).
+        if self._kick_foot_pitch_log:
+            pl = self._kick_foot_pitch_log
+            metrics["chapa/foot_pitch_at_impact_abs_mean"] = sum(pl) / len(pl)
+            # Fraction of kicks with foot "flat enough" for an instep contact.
+            metrics["chapa/flat_pose_rate_0.10rad"] = sum(1 for v in pl if v < 0.10) / len(pl)
+            self._kick_foot_pitch_log = []
+        if self._kick_foot_roll_log:
+            rl = self._kick_foot_roll_log
+            metrics["chapa/foot_roll_at_impact_abs_mean"] = sum(rl) / len(rl)
+            self._kick_foot_roll_log = []
+        if self._kick_ball_x_local_log:
+            xl = self._kick_ball_x_local_log
+            xl_abs = [abs(v) for v in xl]
+            metrics["chapa/contact_x_local_mean"] = sum(xl) / len(xl)
+            metrics["chapa/contact_x_local_abs_mean"] = sum(xl_abs) / len(xl_abs)
+            # Hits beyond foot-tip threshold are toe-style contacts.
+            toe_threshold = self.cfg["rewards"].get("chapa_toe_threshold", 0.08)
+            metrics["chapa/instep_contact_rate"] = sum(1 for v in xl_abs if v < toe_threshold) / len(xl_abs)
+            self._kick_ball_x_local_log = []
+        if self._kick_ball_y_local_log:
+            yl_abs = [abs(v) for v in self._kick_ball_y_local_log]
+            metrics["chapa/contact_y_local_abs_mean"] = sum(yl_abs) / len(yl_abs)
+            self._kick_ball_y_local_log = []
+        if self._kick_ball_z_local_log:
+            zl = self._kick_ball_z_local_log
+            metrics["chapa/contact_z_local_mean"] = sum(zl) / len(zl)
+            self._kick_ball_z_local_log = []
         return metrics
 
     def _teleport_robot(self):
@@ -846,6 +914,10 @@ class KickingMovement(BaseTask):
         # Detect first kick per episode and record angular error metric
         ball_speed_world = torch.norm(self.root_states[:, 1, 7:10], dim=-1)
         newly_kicked = (ball_speed_world > 0.5) & ~self.kick_detected
+        # Per-step flag: True only on the exact step a kick is first detected.
+        # Cleared every step (assigned from `newly_kicked` below) so subclasses can
+        # use it as a single-shot pulse signal in their reward functions.
+        self.kick_just_detected[:] = newly_kicked
         if newly_kicked.any():
             ball_vel_3d = self.root_states[newly_kicked, 1, 7:10]
             ball_vel_dir = ball_vel_3d / (torch.norm(ball_vel_3d, dim=-1, keepdim=True) + 1e-6)
@@ -860,6 +932,23 @@ class KickingMovement(BaseTask):
             target_dxy = torch.norm(self.kick_target_pos_world[newly_kicked, :2] - self.ball_pos[newly_kicked, :2], dim=-1) + 1e-6
             target_elev = torch.atan2(target_dz, target_dxy)
             self.z_error_at_kick[newly_kicked] = torch.abs(ball_elev - target_elev) * (180.0 / np.pi)
+
+            # Snapshot pose-at-impact (used by Chapa subclass). Pick the foot that
+            # was closest to the ball, then store its pitch/roll and the ball
+            # position expressed in that foot's local frame.
+            nk_idx = newly_kicked.nonzero(as_tuple=False).flatten()
+            d_left = torch.norm(self.feet_pos[nk_idx, 0, :] - self.ball_pos[nk_idx], dim=-1)
+            d_right = torch.norm(self.feet_pos[nk_idx, 1, :] - self.ball_pos[nk_idx], dim=-1)
+            kick_foot_idx = (d_right < d_left).long()  # 0 = left, 1 = right
+            self.kick_foot_idx_at_impact[nk_idx] = kick_foot_idx
+            rows = torch.arange(nk_idx.shape[0], device=self.device)
+            chosen_foot_pos = self.feet_pos[nk_idx][rows, kick_foot_idx]
+            chosen_foot_quat = self.feet_quat[nk_idx][rows, kick_foot_idx]
+            self.kick_foot_pitch_at_impact[nk_idx] = self.feet_pitch[nk_idx][rows, kick_foot_idx]
+            self.kick_foot_roll_at_impact[nk_idx] = self.feet_roll[nk_idx][rows, kick_foot_idx]
+            ball_rel_world = self.ball_pos[nk_idx] - chosen_foot_pos
+            self.kick_ball_local_at_impact[nk_idx] = quat_rotate_inverse(chosen_foot_quat, ball_rel_world)
+
             self.kick_detected[newly_kicked] = True
 
         # Detect first crossing of the lateral reference line and record y error
@@ -963,8 +1052,9 @@ class KickingMovement(BaseTask):
     def _refresh_feet_state(self):
         self.feet_pos[:] = self.body_states[:, self.feet_indices, 0:3]
         self.feet_quat[:] = self.body_states[:, self.feet_indices, 3:7]
-        roll, _, yaw = get_euler_xyz(self.feet_quat.reshape(-1, 4))
+        roll, pitch, yaw = get_euler_xyz(self.feet_quat.reshape(-1, 4))
         self.feet_roll[:] = (roll.reshape(self.num_envs, len(self.feet_indices)) + torch.pi) % (2 * torch.pi) - torch.pi
+        self.feet_pitch[:] = (pitch.reshape(self.num_envs, len(self.feet_indices)) + torch.pi) % (2 * torch.pi) - torch.pi
         self.feet_yaw[:] = (yaw.reshape(self.num_envs, len(self.feet_indices)) + torch.pi) % (2 * torch.pi) - torch.pi
         feet_edge_relative_pos = (
             to_torch(self.cfg["asset"]["feet_edge_pos"], device=self.device)
