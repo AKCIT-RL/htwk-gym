@@ -1,4 +1,8 @@
 logs
 wandb
 __pycache__
-.gym*
+.gymtorch_cache
+eval_results
+IsaacGym_Preview_4_Package.tar.gz
+videos
+
