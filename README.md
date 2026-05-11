@@ -186,7 +186,7 @@ Resume from checkpoint:
 
 #### T1 — Base Walk Extended
 
-Extends Base Walk with a 52-dim obs space (adds ball/target slots, filled with zeros during walk training). Use as a bridge before fine-tuning Kicking_Movement.
+Extends Base Walk with a 52-dim obs space (adds ball/target slots, filled with zeros during walk training). Use as a bridge before fine-tuning Kicking_Movement_Bica / Kicking_Movement_Chapa.
 
 ```sh
 docker build -t htwk-gym . && docker run -it --rm --gpus all \
@@ -206,7 +206,7 @@ Resume from checkpoint:
     --checkpoint logs/T1/T1/Base_Walk_Extended/<timestamp>/nn/model_<N>.pth
 ```
 
-#### T1 — Kicking Movement
+#### T1 — Kicking Movement Bica
 
 Fine-tunes a walk-to-kick policy on top of Base_Walk_Extended (same 52-dim actor, critic re-initialised). Load the best Base_Walk_Extended checkpoint as starting point.
 
@@ -218,7 +218,25 @@ docker build -t htwk-gym . && docker run -it --rm --gpus all \
   -v $(pwd)/data:/app/data \
   -v $(pwd)/.gymtorch_cache:/root/.cache/torch_extensions \
   htwk-gym \
-  python3 train.py --task T1/Kicking_Movement \
+  python3 train.py --task T1/Kicking_Movement_Bica \
+    --checkpoint logs/T1/T1/Base_Walk_Extended/<timestamp>/nn/model_<N>.pth \
+    --num_envs 4096 --headless True \
+    --sim_device cuda:0 --rl_device cuda:0
+```
+
+#### T1 — Kicking Movement Chapa
+
+Same task class as Kicking_Movement_Bica for now; uses its own YAML (`envs/T1/Kicking_Movement_Chapa.yaml`).
+
+```sh
+docker run -it --rm --gpus all \
+  --network host \
+  -e WANDB_API_KEY=<your_key> \
+  -v $(pwd)/logs:/app/logs \
+  -v $(pwd)/data:/app/data \
+  -v $(pwd)/.gymtorch_cache:/root/.cache/torch_extensions \
+  htwk-gym \
+  python3 train.py --task T1/Kicking_Movement_Chapa \
     --checkpoint logs/T1/T1/Base_Walk_Extended/<timestamp>/nn/model_<N>.pth \
     --num_envs 4096 --headless True \
     --sim_device cuda:0 --rl_device cuda:0
@@ -298,7 +316,7 @@ xhost +local:docker && docker run --rm --gpus all \
     --num_envs 4 --headless False --sim_device cuda:0 --rl_device cuda:0
 ```
 
-#### T1 — Kicking Movement
+#### T1 — Kicking Movement Bica
 
 ```sh
 xhost +local:docker && docker run --rm --gpus all \
@@ -308,8 +326,23 @@ xhost +local:docker && docker run --rm --gpus all \
   -v $(pwd)/videos:/app/videos \
   -v $(pwd)/.gymtorch_cache:/root/.cache/torch_extensions \
   htwk-gym \
-  python3 play.py --task T1/Kicking_Movement \
-    --checkpoint logs/T1/T1/Kicking_Movement/<timestamp>/nn/model_<N>.pth \
+  python3 play.py --task T1/Kicking_Movement_Bica \
+    --checkpoint logs/T1/T1/Kicking_Movement_Bica/<timestamp>/nn/model_<N>.pth \
+    --num_envs 4 --headless False --sim_device cuda:0 --rl_device cuda:0
+```
+
+#### T1 — Kicking Movement Chapa
+
+```sh
+xhost +local:docker && docker run --rm --gpus all \
+  -e DISPLAY=$DISPLAY -e WANDB_MODE=disabled \
+  -v /tmp/.X11-unix:/tmp/.X11-unix \
+  -v $(pwd)/logs:/app/logs \
+  -v $(pwd)/videos:/app/videos \
+  -v $(pwd)/.gymtorch_cache:/root/.cache/torch_extensions \
+  htwk-gym \
+  python3 play.py --task T1/Kicking_Movement_Chapa \
+    --checkpoint logs/T1/T1/Kicking_Movement_Chapa/<timestamp>/nn/model_<N>.pth \
     --num_envs 4 --headless False --sim_device cuda:0 --rl_device cuda:0
 ```
 
