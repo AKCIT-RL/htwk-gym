@@ -311,11 +311,11 @@ rewards:
     feet_roll: -0.1
     feet_distance: -0.3
     feet_swing: 3.
-    ball_velocity_target_direction: 3.0
+    ball_velocity_target_direction: 6.0
     kicking_foot_approach_ball_stationary: 10.
     body_alignment_for_kick: 1.0
     body_angle: 0.1
-    ball_acceleration: 0.25
+    ball_acceleration: 3.0
     post_kick_stillness: 4.0
     waiting: -0.3
   ball_rolling_scale:
@@ -368,7 +368,7 @@ rewards:
 
   # Parameters for ball_acceleration
   ball_acceleration_scale: 10.0
-  max_ball_acceleration_reward: 1.0
+  max_ball_acceleration_reward: 5.0
 
   # Parameters for post_kick_stillness
   post_kick_delay_s: 0.5
