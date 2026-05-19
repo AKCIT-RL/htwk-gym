@@ -553,11 +553,61 @@ For direct deployment to physical robots with live parameter control:
 
 #### Pre-trained Models
 HTWK Gym includes pre-trained models in the `deploy/models/` directory:
-- `base_walk.pt` - T1 robot base walking policy
-- `parameter_walk.pt` - Parameterized walking policy
-- Additional specialized models for different behaviors
+- `base_walk.pt` — T1 robot base walking policy
+- `parameter_walk.pt` — Parameterized walking policy
+- `kicking_bikinha.pt` — T1 toe-kick (“bikinha”) policy, trained on `T1/Kicking_Movement_Bica`. Companion config: [`deploy/configs/Kicking_Bikinha.yaml`](deploy/configs/Kicking_Bikinha.yaml). See [Evaluation: Kicking Bikinha](#evaluation-kicking-bikinha-toe-kick) below.
 
 After exporting the model, follow the steps in [Deploy on Booster Robot](deploy/README.md) to complete the deployment process.
+
+### Evaluation: Kicking Bikinha (toe kick)
+
+Official toe-kick policy shipped as [`deploy/models/kicking_bikinha.pt`](deploy/models/kicking_bikinha.pt).
+
+- **Source checkpoint:** `logs/T1/T1/Kicking_Movement/2026-05-08-22-16-21/nn/model_5000.pth`
+- **Task / env:** `T1/Kicking_Movement_Bica` (`envs/T1/Kicking_Movement_Bica.yaml`)
+- **Evaluator:** [`evaluate_kick.py`](evaluate_kick.py), all 6 scenarios, 60 parallel envs
+
+Per-scenario results (counts of `kicks_detected / falls / hits` over `n_attempts`):
+
+| Scenario      | n  | kick% | hit% (≤20°, ≤0.5 m) | fall% | mean ang. err | mean ball speed | mean travel |
+|---------------|----|-------|----------------------|-------|---------------|------------------|-------------|
+| angles        | 60 | 98%   | 60%                  | 3%    | 13.9°         | 9.3 m/s          | 3.17 m      |
+| ball_pos      | 60 | 98%   | 55%                  | 15%   | 18.8°         | 5.2 m/s          | 3.07 m      |
+| robot_yaw     | 60 | 98%   | 40%                  | 7%    | 19.6°         | 9.0 m/s          | 3.12 m      |
+| ball_vel      | 60 | 100%  | 73%                  | 2%    | 11.5°         | 8.7 m/s          | 3.36 m      |
+| distance      | 60 | 100%  | 87%                  | 0%    | 11.1°         | 9.6 m/s          | 3.29 m      |
+| disturb_push  | 60 | 100%  | 85%                  | 0%    | 10.9°         | 9.7 m/s          | 3.29 m      |
+| **aggregate** | **360** | **99%** | **67%** | **4%** | **14.3°** | **8.6 m/s** | **3.22 m** |
+
+Where it shines (≥85% hits): straight shots over varying **distance** (2–10 m), **push disturbances** up to 100 N, and the **ball_vel** scenario (ball rolling slowly).
+
+Where it struggles:
+- **Robot yaw ±30°** — drops to 0–25% when the robot starts misaligned with the ball; only the 0° / ±15° conditions stay above 65%.
+- **Lateral ball offset (|dy| = 0.15 m)** — the `ball_pos` heatmap shows hit rate collapses on the side rows while front-centred ball offsets stay 75–90%. The `ball_pos` scenario also has the worst fall rate (15%).
+- **Wider angle sweeps** — the `angles` scenario is still <70%, mostly because of overshoot at the extremes (±15°).
+- **Foot bias** — the policy kicks almost exclusively with the **left** foot in every scenario.
+
+Plots (see [`eval_results/T1_Kicking_Movement_Bica/cand_KM_22-16-21/plots/`](eval_results/T1_Kicking_Movement_Bica/cand_KM_22-16-21/plots)):
+- `0_overview.png` — hit/fall % and mean angular error per scenario
+- `angles.png`, `robot_yaw.png`, `distance.png`, `ball_vel.png`, `disturb_push.png` — per-condition outcome rates, angular error, and ball speed
+- `ball_pos.png`, `ball_pos_heatmap.png` — initial ball offset sweep (heatmap of hit % and angular error in robot-frame XY)
+
+To reproduce:
+
+```sh
+docker run --rm --gpus all --network host \
+  -v $(pwd)/logs:/app/logs -v $(pwd)/envs:/app/envs -v $(pwd)/utils:/app/utils \
+  -v $(pwd)/evaluate_kick.py:/app/evaluate_kick.py \
+  -v $(pwd)/eval_results:/app/eval_results \
+  htwk-gym:latest \
+  python3 evaluate_kick.py \
+    --task T1/Kicking_Movement_Bica \
+    --checkpoint logs/T1/T1/Kicking_Movement/2026-05-08-22-16-21/nn/model_5000.pth \
+    --scenarios all --num_envs 60 --headless True \
+    --sim_device cuda:0 --rl_device cuda:0
+
+python3 scripts/plot_kick_eval.py eval_results/T1_Kicking_Movement_Bica/<timestamp>
+```
 
 ## Real-Time Parameter Control
 
