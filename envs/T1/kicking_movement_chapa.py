@@ -124,6 +124,34 @@ class KickingMovementChapa(KickingMovementBica):
         return pitch_score * x_score * pulse / self.dt
 
     # ----------------------------------------------------------------------
+    # Override the dominant post-kick reward to gate it by the pose-at-impact.
+    # This is the key signal that pushes the policy from toe-kick to chapa:
+    # the *ball velocity toward target* reward — which dominates the budget
+    # for ~2 s after impact — is multiplied by a gaussian on the pitch the
+    # foot had at the impact step. With weight=1.0 the policy can only
+    # collect that reward by having approached with the foot horizontal.
+    # Gated by `chapa_velocity_pose_weight` (default 0.0 = identical to the
+    # ungated toe-kick baseline), so this override is fully opt-in.
+    # ----------------------------------------------------------------------
+    def _reward_ball_velocity_target_direction(self):
+        base = super()._reward_ball_velocity_target_direction()
+
+        cfg = self.cfg["rewards"]
+        weight = cfg.get("chapa_velocity_pose_weight", 0.0)
+        if weight <= 0.0:
+            return base
+
+        sigma = cfg.get("chapa_impact_pitch_sigma", 0.25)
+        target_pitch = cfg.get("chapa_pose_target_pitch", 0.0)
+        pose_factor = torch.exp(
+            -torch.square(self.kick_foot_pitch_at_impact - target_pitch)
+            / (sigma * sigma + 1e-8)
+        )
+
+        w = max(0.0, min(1.0, weight))
+        return base * ((1.0 - w) + w * pose_factor)
+
+    # ----------------------------------------------------------------------
     # Override approach reward to weight by pose factor
     # ----------------------------------------------------------------------
     def _reward_kicking_foot_approach_ball_stationary(self):
