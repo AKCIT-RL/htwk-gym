@@ -226,7 +226,13 @@ docker build -t htwk-gym . && docker run -it --rm --gpus all \
 
 #### T1 — Kicking Movement Chapa
 
-Same task class as Kicking_Movement_Bica for now; uses its own YAML (`envs/T1/Kicking_Movement_Chapa.yaml`).
+Fine-tunes the *de chapa* (instep) kick on top of Base_Walk_Extended. Shares
+the `KickingMovementChapa` env class with the toe-kick task but uses its own
+YAML (`envs/T1/Kicking_Movement_Chapa.yaml`), which enables
+`chapa_velocity_pose_weight: 1.0` to multiplicatively gate the dominant
+post-kick velocity reward by the pitch the foot had at impact — the policy
+can only collect that reward by approaching with the foot near-horizontal,
+so it converges to a flat instep kick instead of a toe whip.
 
 ```sh
 docker run -it --rm --gpus all \
@@ -556,6 +562,7 @@ HTWK Gym includes pre-trained models in the `deploy/models/` directory:
 - `base_walk.pt` — T1 robot base walking policy
 - `parameter_walk.pt` — Parameterized walking policy
 - `kicking_bikinha.pt` — T1 toe-kick (“bikinha”) policy, trained on `T1/Kicking_Movement_Bica`. Companion config: [`deploy/configs/Kicking_Bikinha.yaml`](deploy/configs/Kicking_Bikinha.yaml). See [Evaluation: Kicking Bikinha](#evaluation-kicking-bikinha-toe-kick) below.
+- `kicking_chapa.pt` — T1 instep (“chapa”) policy, trained on `T1/Kicking_Movement_Chapa`. Companion config: [`deploy/configs/Kicking_Chapa.yaml`](deploy/configs/Kicking_Chapa.yaml). See [Evaluation: Kicking Chapa](#evaluation-kicking-chapa-instep-kick) below.
 
 After exporting the model, follow the steps in [Deploy on Booster Robot](deploy/README.md) to complete the deployment process.
 
@@ -607,6 +614,74 @@ docker run --rm --gpus all --network host \
     --sim_device cuda:0 --rl_device cuda:0
 
 python3 scripts/plot_kick_eval.py eval_results/T1_Kicking_Movement_Bica/<timestamp>
+```
+
+### Evaluation: Kicking Chapa (instep kick)
+
+Official instep-kick policy shipped as [`deploy/models/kicking_chapa.pt`](deploy/models/kicking_chapa.pt).
+
+- **Source checkpoint:** `logs/T1/T1/Kicking_Movement_Chapa/2026-05-19-16-39-23/nn/model_4000.pth`
+- **Task / env:** `T1/Kicking_Movement_Chapa` (`envs/T1/Kicking_Movement_Chapa.yaml`)
+- **Evaluator:** [`evaluate_kick.py`](evaluate_kick.py), all 6 scenarios, 60 parallel envs
+
+**Why a separate policy?** The Bikinha (toe-kick) policy hits the ball with the
+foot pitched ~53° down — fast, but contact is on the toe tip. Chapa is the
+proper football *instep* technique: foot horizontal at impact, contact on the
+top of the foot. This is enabled by a single change to the reward shaping
+(`chapa_velocity_pose_weight: 1.0`) that multiplies the dominant post-kick
+*ball-velocity-toward-target* reward by a gaussian on the foot pitch at the
+moment of impact, so the policy can only collect that reward by keeping the
+foot flat.
+
+Aggregate over 360 attempts (6 scenarios × 60 envs). The "ungated baseline"
+column is the same chapa task trained with `chapa_velocity_pose_weight: 0.0`
+(equivalent to a toe-kick policy on the chapa scaffold) — isolating the
+effect of the single reward-gating change:
+
+| metric                                   | ungated baseline | chapa (this policy) |
+|------------------------------------------|------------------:|--------------------:|
+| foot pitch at impact                     |          ~53 deg  |           ~3.3 deg  |
+| `flat_pose_rate` (pitch ≤ 10°)           |            3.4 %  |             82.4 %  |
+| `instep_contact_rate` (|x_local| ≤ 8 cm) |            1.6 %  |              9.6 %  |
+| hit rate (≤ 20° ang. err, ≤ 0.5 m)       |           70.8 %  |             67.5 %  |
+| fall rate                                |            1.1 %  |              6.1 %  |
+| mean angular error                       |           12.6 °  |            12.4 °   |
+| mean ball speed                          |          7.4 m/s  |          6.9 m/s    |
+
+Per-scenario hit rate (≤ 20° ang. err, ≤ 0.5 m lateral):
+
+| Scenario      | n  | hit% |
+|---------------|----|------|
+| angles        | 60 | 73%  |
+| ball_pos      | 60 | 42%  |
+| robot_yaw     | 60 | 55%  |
+| ball_vel      | 60 | 65%  |
+| distance      | 60 | 80%  |
+| disturb_push  | 60 | 90%  |
+| **aggregate** | **360** | **67.5%** |
+
+Trade-off vs the ungated baseline: ~3 pp drop in hit rate and slightly
+slower ball speed, in exchange for actually kicking with the *instep*
+technique (≈24× higher flat-pose rate, ≈6× higher instep-contact rate).
+The remaining hits with non-zero pitch are mostly on the `ball_pos`
+lateral offsets, where the policy still occasionally falls back to a
+side-of-foot contact.
+
+To reproduce:
+
+```sh
+docker run --rm --gpus all --network host \
+  -v $(pwd)/logs:/app/logs -v $(pwd)/envs:/app/envs -v $(pwd)/utils:/app/utils \
+  -v $(pwd)/evaluate_kick.py:/app/evaluate_kick.py \
+  -v $(pwd)/eval_results:/app/eval_results \
+  htwk-gym:latest \
+  python3 evaluate_kick.py \
+    --task T1/Kicking_Movement_Chapa \
+    --checkpoint logs/T1/T1/Kicking_Movement_Chapa/<timestamp>/nn/model_4000.pth \
+    --scenarios all --num_envs 60 --headless True \
+    --sim_device cuda:0 --rl_device cuda:0
+
+python3 scripts/plot_kick_eval.py eval_results/T1_Kicking_Movement_Chapa/<timestamp>
 ```
 
 ## Real-Time Parameter Control
