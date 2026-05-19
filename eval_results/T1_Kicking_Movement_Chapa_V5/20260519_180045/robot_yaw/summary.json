@@ -1,0 +1,317 @@
+{
+  "scenario": "robot_yaw",
+  "description": "Initial robot yaw with ball at default front pose.",
+  "per_condition": [
+    {
+      "condition_idx": 0,
+      "condition_label": "yaw=-30.0deg",
+      "n_attempts": 12,
+      "n_kicks_detected": 12,
+      "n_crossed_ref": 11,
+      "n_timed_out": 0,
+      "n_fell_before_kick": 0,
+      "n_fell_after_kick": 1,
+      "n_hits": 6,
+      "hit_rate": 0.5,
+      "angular_error_deg": {
+        "count": 12,
+        "mean": 20.320770263671875,
+        "std": 28.89006805419922
+      },
+      "z_error_deg": {
+        "count": 12,
+        "mean": 3.870314836502075,
+        "std": 4.715548992156982
+      },
+      "lateral_error_m": {
+        "count": 11,
+        "mean": 0.5019173622131348,
+        "std": 0.3636981248855591
+      },
+      "ball_speed_at_kick_mps": {
+        "count": 12,
+        "mean": 5.692508220672607,
+        "std": 2.850754737854004
+      },
+      "ball_travel_m": {
+        "count": 12,
+        "mean": 3.412986993789673,
+        "std": 0.9641633033752441
+      },
+      "time_to_kick_s": {
+        "count": 12,
+        "mean": 0.6966666666666668,
+        "std": 0.2711498150879366
+      },
+      "energy_act_sq": {
+        "count": 12,
+        "mean": 143.34454345703125,
+        "std": 19.074596405029297
+      },
+      "foot_kicked_counts": {
+        "left": 9,
+        "right": 3,
+        "unknown": 0
+      }
+    },
+    {
+      "condition_idx": 1,
+      "condition_label": "yaw=-15.0deg",
+      "n_attempts": 12,
+      "n_kicks_detected": 11,
+      "n_crossed_ref": 11,
+      "n_timed_out": 0,
+      "n_fell_before_kick": 1,
+      "n_fell_after_kick": 0,
+      "n_hits": 11,
+      "hit_rate": 0.9166666666666666,
+      "angular_error_deg": {
+        "count": 11,
+        "mean": 6.990833759307861,
+        "std": 4.227299690246582
+      },
+      "z_error_deg": {
+        "count": 11,
+        "mean": 3.990295171737671,
+        "std": 5.220213413238525
+      },
+      "lateral_error_m": {
+        "count": 11,
+        "mean": 0.21148324012756348,
+        "std": 0.09634658694267273
+      },
+      "ball_speed_at_kick_mps": {
+        "count": 11,
+        "mean": 7.730023384094238,
+        "std": 1.9885973930358887
+      },
+      "ball_travel_m": {
+        "count": 12,
+        "mean": 3.1584765911102295,
+        "std": 0.8186172842979431
+      },
+      "time_to_kick_s": {
+        "count": 11,
+        "mean": 0.7545454545454546,
+        "std": 0.13432414230737366
+      },
+      "energy_act_sq": {
+        "count": 12,
+        "mean": 139.39112854003906,
+        "std": 14.027698516845703
+      },
+      "foot_kicked_counts": {
+        "left": 10,
+        "right": 1,
+        "unknown": 0
+      }
+    },
+    {
+      "condition_idx": 2,
+      "condition_label": "yaw=+0.0deg",
+      "n_attempts": 12,
+      "n_kicks_detected": 12,
+      "n_crossed_ref": 12,
+      "n_timed_out": 0,
+      "n_fell_before_kick": 0,
+      "n_fell_after_kick": 0,
+      "n_hits": 11,
+      "hit_rate": 0.9166666666666666,
+      "angular_error_deg": {
+        "count": 12,
+        "mean": 4.888641357421875,
+        "std": 4.254242420196533
+      },
+      "z_error_deg": {
+        "count": 12,
+        "mean": 1.9185508489608765,
+        "std": 4.011900424957275
+      },
+      "lateral_error_m": {
+        "count": 12,
+        "mean": 0.2090783268213272,
+        "std": 0.16207338869571686
+      },
+      "ball_speed_at_kick_mps": {
+        "count": 12,
+        "mean": 6.817556858062744,
+        "std": 2.6041147708892822
+      },
+      "ball_travel_m": {
+        "count": 12,
+        "mean": 3.3891172409057617,
+        "std": 0.22733157873153687
+      },
+      "time_to_kick_s": {
+        "count": 12,
+        "mean": 0.7333333333333334,
+        "std": 0.15062831370260005
+      },
+      "energy_act_sq": {
+        "count": 12,
+        "mean": 136.0995330810547,
+        "std": 12.694028854370117
+      },
+      "foot_kicked_counts": {
+        "left": 10,
+        "right": 2,
+        "unknown": 0
+      }
+    },
+    {
+      "condition_idx": 3,
+      "condition_label": "yaw=+15.0deg",
+      "n_attempts": 12,
+      "n_kicks_detected": 12,
+      "n_crossed_ref": 12,
+      "n_timed_out": 0,
+      "n_fell_before_kick": 0,
+      "n_fell_after_kick": 0,
+      "n_hits": 4,
+      "hit_rate": 0.3333333333333333,
+      "angular_error_deg": {
+        "count": 12,
+        "mean": 16.699691772460938,
+        "std": 6.977273464202881
+      },
+      "z_error_deg": {
+        "count": 12,
+        "mean": 3.1583588123321533,
+        "std": 3.2669599056243896
+      },
+      "lateral_error_m": {
+        "count": 12,
+        "mean": 0.803001880645752,
+        "std": 0.38339048624038696
+      },
+      "ball_speed_at_kick_mps": {
+        "count": 12,
+        "mean": 7.9274582862854,
+        "std": 2.0762622356414795
+      },
+      "ball_travel_m": {
+        "count": 12,
+        "mean": 3.3522493839263916,
+        "std": 0.18249943852424622
+      },
+      "time_to_kick_s": {
+        "count": 12,
+        "mean": 0.79,
+        "std": 0.16421530582338134
+      },
+      "energy_act_sq": {
+        "count": 12,
+        "mean": 141.07330322265625,
+        "std": 15.127467155456543
+      },
+      "foot_kicked_counts": {
+        "left": 11,
+        "right": 1,
+        "unknown": 0
+      }
+    },
+    {
+      "condition_idx": 4,
+      "condition_label": "yaw=+30.0deg",
+      "n_attempts": 12,
+      "n_kicks_detected": 11,
+      "n_crossed_ref": 11,
+      "n_timed_out": 0,
+      "n_fell_before_kick": 1,
+      "n_fell_after_kick": 0,
+      "n_hits": 1,
+      "hit_rate": 0.08333333333333333,
+      "angular_error_deg": {
+        "count": 11,
+        "mean": 27.01667022705078,
+        "std": 12.619925498962402
+      },
+      "z_error_deg": {
+        "count": 11,
+        "mean": 5.1663384437561035,
+        "std": 6.449302673339844
+      },
+      "lateral_error_m": {
+        "count": 11,
+        "mean": 1.3119537830352783,
+        "std": 0.7129972577095032
+      },
+      "ball_speed_at_kick_mps": {
+        "count": 11,
+        "mean": 7.115024089813232,
+        "std": 3.515511989593506
+      },
+      "ball_travel_m": {
+        "count": 12,
+        "mean": 3.156395673751831,
+        "std": 0.9272611737251282
+      },
+      "time_to_kick_s": {
+        "count": 11,
+        "mean": 0.7927272727272728,
+        "std": 0.22823795035767183
+      },
+      "energy_act_sq": {
+        "count": 12,
+        "mean": 166.2937774658203,
+        "std": 51.44265365600586
+      },
+      "foot_kicked_counts": {
+        "left": 8,
+        "right": 3,
+        "unknown": 0
+      }
+    }
+  ],
+  "overall": {
+    "n_attempts": 60,
+    "n_kicks_detected": 58,
+    "n_crossed_ref": 57,
+    "n_timed_out": 0,
+    "n_fell_before_kick": 2,
+    "n_fell_after_kick": 1,
+    "n_hits": 33,
+    "hit_rate": 0.55,
+    "angular_error_deg": {
+      "count": 58,
+      "mean": 15.1205472946167,
+      "std": 16.948150634765625
+    },
+    "z_error_deg": {
+      "count": 58,
+      "mean": 3.5877528190612793,
+      "std": 4.9325480461120605
+    },
+    "lateral_error_m": {
+      "count": 57,
+      "mean": 0.6039274334907532,
+      "std": 0.5757923126220703
+    },
+    "ball_speed_at_kick_mps": {
+      "count": 58,
+      "mean": 7.043893814086914,
+      "std": 2.7767748832702637
+    },
+    "ball_travel_m": {
+      "count": 60,
+      "mean": 3.2938454151153564,
+      "std": 0.7222802042961121
+    },
+    "time_to_kick_s": {
+      "count": 58,
+      "mean": 0.7527586206896553,
+      "std": 0.20026528185219442
+    },
+    "energy_act_sq": {
+      "count": 60,
+      "mean": 145.24044799804688,
+      "std": 28.909908294677734
+    },
+    "foot_kicked_counts": {
+      "left": 48,
+      "right": 10,
+      "unknown": 0
+    }
+  },
+  "elapsed_s": 4.541147947311401
+}
