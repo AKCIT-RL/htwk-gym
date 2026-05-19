@@ -20,8 +20,8 @@ Viewer keys (focus on the MuJoCo window):
     [/] rotate target ∓/±10°  -/= dist ∓/±1 m   P  print state
 
 Examples:
-    python play_mujoco_kick.py --task T1/Kicking_Movement_Chapa_V3
-    python play_mujoco_kick.py --task T1/Kicking_Movement_Chapa_V3 \\
+    python play_mujoco_kick.py --task T1/Kicking_Movement_Chapa
+    python play_mujoco_kick.py --task T1/Kicking_Movement_Chapa \\
         --evaluate --scenarios angles,distance --num_envs 24 --max_steps 400
 """
 
@@ -1082,7 +1082,7 @@ def run_evaluation(cfg, model, ctx, eval_args, task_name, ckpt_path):
 def build_argparser():
     p = argparse.ArgumentParser()
     p.add_argument("--task", required=True, type=str,
-                   help="Task name relative to envs/, e.g. T1/Kicking_Movement_Chapa_V3.")
+                   help="Task name relative to envs/, e.g. T1/Kicking_Movement_Chapa.")
     p.add_argument("--checkpoint", type=str, default=None)
 
     # Viewer-only args
