@@ -40,6 +40,12 @@ Follow these steps to set up your environment and deploy a policy on the robot:
      ```
      - Open your browser at `http://<robot_ip>:8501` to access the web-based control interface.
      - Use interface sliders to adjust gait parameters and commands in real time.
+   - **For kicking (bikinha / toe-kick):**
+     ```sh
+     $ python deploy_kicking_bikinha.py --config=Kicking_Bikinha.yaml --net=127.0.0.1 \
+         --ball_x 0.35 --ball_y 0.0 --kick_angle_deg 0 --target_z 0.0
+     ```
+     See [Kicking Bikinha Deployment](#kicking-bikinha-deployment) below for details.
 
 5. **Exit Safely:**
    - Press `Ctrl+C` to stop deployment scripts.
@@ -47,10 +53,71 @@ Follow these steps to set up your environment and deploy a policy on the robot:
 
 ---
 
+### Kicking Bikinha Deployment
+
+The **Kicking Bikinha** policy performs a toe-kick ("biquinha") on a stationary ball. The robot walks toward the ball, aligns, and kicks it toward a target direction.
+
+#### Parameters
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--config` | (required) | Config file in `configs/`. Use `Kicking_Bikinha.yaml`. |
+| `--net` | `127.0.0.1` | Network interface for SDK. Use `127.0.0.1` on the Intel Board. |
+| `--ball_x` | `0.35` | Ball X position in robot frame (metres, positive = forward). |
+| `--ball_y` | `0.0` | Ball Y position in robot frame (metres, positive = left). |
+| `--kick_angle_deg` | `0` | Kick direction in robot frame (degrees, 0 = straight ahead). |
+| `--target_z` | `0.0` | Target z height relative to ball (metres, 0 = ground kick). |
+
+#### Setup for a quick test
+
+1. Place the ball approximately **35 cm in front** of the robot's feet, centred (this is `--ball_x 0.35 --ball_y 0.0`).
+2. Run:
+   ```sh
+   $ python deploy_kicking_bikinha.py --config=Kicking_Bikinha.yaml --net=127.0.0.1
+   ```
+3. The robot will approach the ball and kick it straight ahead.
+
+#### Adjusting kick direction
+
+Use `--kick_angle_deg` to aim. Positive = left, negative = right (in the robot's frame):
+
+```sh
+# Kick 15° to the left
+$ python deploy_kicking_bikinha.py --config=Kicking_Bikinha.yaml --kick_angle_deg 15
+
+# Kick 10° to the right
+$ python deploy_kicking_bikinha.py --config=Kicking_Bikinha.yaml --kick_angle_deg -10
+```
+
+> **Note:** The policy was trained on angles in the ±15° range. Larger angles may work but accuracy degrades.
+
+#### Adjusting ball position
+
+If the ball is not directly in front, specify its position in the robot's frame:
+
+```sh
+# Ball 40 cm ahead and 10 cm to the left
+$ python deploy_kicking_bikinha.py --config=Kicking_Bikinha.yaml --ball_x 0.40 --ball_y 0.10
+```
+
+> **Note:** The policy works best with ball positions in the range `dx ∈ [0.20, 0.45]`, `dy ∈ [-0.15, 0.15]`.
+
+#### Using with vision (future)
+
+To plug in a ball detector, override `_get_ball_position()` in `deploy_kicking_bikinha.py`. It should return `np.array([x, y])` in the robot's local frame, updated each control step.
+
+#### Known limitations
+
+- **Left-foot bias:** The policy almost always kicks with the left foot.
+- **Yaw sensitivity:** If the robot starts misaligned (>15° from the ball), hit accuracy drops significantly.
+- **Target z range:** The policy was trained mostly with `target_z ≈ 0` (ground kicks). Non-zero values are accepted via `--target_z` but accuracy is untested.
+
+---
+
 ### Notes
 
 - **Configuration files:**  
-  All config files are in `configs/` (e.g. `Base_Walk.yaml`, `Parameter_Walk.yaml`). Each contains model paths, control gains, normalization, and limits.
+  All config files are in `configs/` (e.g. `Base_Walk.yaml`, `Parameter_Walk.yaml`, `Kicking_Bikinha.yaml`). Each contains model paths, control gains, normalization, and limits.
 
 - **Real-Time Observation Controls:**  
   The Streamlit interface lets you adjust gait frequency, foot yaw, body pitch/roll, feet offset, and walk commands on the fly (requires `deploy_parameter_walk.py`).
