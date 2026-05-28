@@ -339,27 +339,19 @@ def read_robot_state(ctx: SimCtx):
 
 def build_obs(cfg: dict, ctx: SimCtx, state: dict, prev_actions: np.ndarray,
               target_world: np.ndarray) -> np.ndarray:
-    """Build the 52-dim kick observation. Mirrors envs/T1/kicking_movement_bica.py."""
+    """Build the kick observation. Dispatches by num_observations:
+      48 → T1/Kicking layout (no commands, has target_distance slot)
+      52 → T1/Kicking_Movement_Bica/Chapa layout (with approach commands)
+    """
     norm = cfg["normalization"]
-    rew = cfg.get("rewards", {})
-    stop_dist = float(rew.get("approach_cmd_stop_dist", 0.5))
-    max_speed = float(rew.get("approach_cmd_max_speed", 1.0))
-    yaw_gain = float(rew.get("approach_cmd_yaw_gain", 0.3))
+    num_obs = cfg["env"]["num_observations"]
+    n_dof = ctx.n_dof
 
     base_pos = state["base_pos"]
     base_quat_xyzw = state["base_quat_xyzw"]
     ball_pos = state["ball_pos"]
 
-    # Approach command (robot frame).
-    to_ball_local = quat_rotate_inverse(base_quat_xyzw, ball_pos - base_pos)
-    dist = max(float(np.linalg.norm(to_ball_local[:2])), 1e-6)
-    speed = min(dist * (max_speed / stop_dist), max_speed)
-    cmd_xy = (to_ball_local[:2] / dist) * speed
-    cmd_yaw = np.arctan2(to_ball_local[1], to_ball_local[0]) * yaw_gain
-    near = 1.0 if dist < stop_dist else 0.0
-    cmd = np.array([cmd_xy[0], cmd_xy[1], cmd_yaw], dtype=np.float32) * (1.0 - near)
-
-    # Target direction in robot frame.
+    # Shared: target direction in robot frame and target z relative to ball.
     ball_to_target = target_world[:2] - ball_pos[:2]
     norm_bt = float(np.linalg.norm(ball_to_target)) + 1e-6
     btn = ball_to_target / norm_bt
@@ -370,25 +362,68 @@ def build_obs(cfg: dict, ctx: SimCtx, state: dict, prev_actions: np.ndarray,
          -sin_y * btn[0] + cos_y * btn[1]],
         dtype=np.float32,
     )
-    target_z_rel = np.array([target_world[2] - ball_pos[2]], dtype=np.float32)
+    target_z_rel = float(target_world[2] - ball_pos[2])
     relative_ball_pos = quat_rotate_inverse(base_quat_xyzw, ball_pos - base_pos)
 
-    n_dof = ctx.n_dof
-    num_obs = cfg["env"]["num_observations"]
     obs = np.zeros(num_obs, dtype=np.float32)
-    obs[0:3] = state["proj_grav"] * norm["gravity"]
-    obs[3:6] = state["base_ang_vel"] * norm["ang_vel"]
-    obs[6] = cmd[0] * norm["lin_vel"]
-    obs[7] = cmd[1] * norm["lin_vel"]
-    obs[8] = cmd[2] * norm["ang_vel"]
-    obs[9] = 0.0
-    obs[10] = 0.0
-    obs[11:13] = relative_ball_pos[:2] * norm["ball_pos"]
-    obs[13:15] = target_dir_robot * norm["target_dir"]
-    obs[15:16] = target_z_rel * norm["target_z"]
-    obs[16 : 16 + n_dof] = (state["dof_pos"] - ctx.default_dof_pos) * norm["dof_pos"]
-    obs[16 + n_dof : 16 + 2 * n_dof] = state["dof_vel"] * norm["dof_vel"]
-    obs[16 + 2 * n_dof : 16 + 3 * n_dof] = prev_actions
+
+    if num_obs == 48:
+        # T1/Kicking layout (mirrors envs/T1/kicking.py _compute_observations)
+        # [0:3]   proj_grav
+        # [3:6]   base_ang_vel
+        # [6:8]   relative_ball_pos[:2]
+        # [8:10]  target_dir_robot
+        # [10]    target_z_rel
+        # [11]    kick_target_distance
+        # [12:24] dof_pos
+        # [24:36] dof_vel
+        # [36:48] actions
+        kick_target_dist = float(np.linalg.norm(ball_to_target))
+        obs[0:3] = state["proj_grav"] * norm["gravity"]
+        obs[3:6] = state["base_ang_vel"] * norm["ang_vel"]
+        obs[6:8] = relative_ball_pos[:2] * norm["ball_pos"]
+        obs[8:10] = target_dir_robot * norm["target_dir"]
+        obs[10] = target_z_rel * norm["target_z"]
+        obs[11] = kick_target_dist * norm["target_distance"]
+        obs[12 : 12 + n_dof] = (state["dof_pos"] - ctx.default_dof_pos) * norm["dof_pos"]
+        obs[12 + n_dof : 12 + 2 * n_dof] = state["dof_vel"] * norm["dof_vel"]
+        obs[12 + 2 * n_dof : 12 + 3 * n_dof] = prev_actions
+    else:
+        # T1/Kicking_Movement_Bica/Chapa layout (52 dims, with approach commands)
+        # [0:3]   proj_grav
+        # [3:6]   base_ang_vel
+        # [6:9]   approach commands [vx, vy, wz]
+        # [9:11]  zeros (gait slots zeroed)
+        # [11:13] relative_ball_pos[:2]
+        # [13:15] target_dir_robot
+        # [15:16] target_z_rel
+        # [16:28] dof_pos
+        # [28:40] dof_vel
+        # [40:52] actions
+        rew = cfg.get("rewards", {})
+        stop_dist = float(rew.get("approach_cmd_stop_dist", 0.5))
+        max_speed = float(rew.get("approach_cmd_max_speed", 1.0))
+        yaw_gain = float(rew.get("approach_cmd_yaw_gain", 0.3))
+        to_ball_local = quat_rotate_inverse(base_quat_xyzw, ball_pos - base_pos)
+        dist = max(float(np.linalg.norm(to_ball_local[:2])), 1e-6)
+        speed = min(dist * (max_speed / stop_dist), max_speed)
+        cmd_xy = (to_ball_local[:2] / dist) * speed
+        cmd_yaw = np.arctan2(to_ball_local[1], to_ball_local[0]) * yaw_gain
+        near = 1.0 if dist < stop_dist else 0.0
+        cmd = np.array([cmd_xy[0], cmd_xy[1], cmd_yaw], dtype=np.float32) * (1.0 - near)
+        obs[0:3] = state["proj_grav"] * norm["gravity"]
+        obs[3:6] = state["base_ang_vel"] * norm["ang_vel"]
+        obs[6] = cmd[0] * norm["lin_vel"]
+        obs[7] = cmd[1] * norm["lin_vel"]
+        obs[8] = cmd[2] * norm["ang_vel"]
+        obs[9] = 0.0
+        obs[10] = 0.0
+        obs[11:13] = relative_ball_pos[:2] * norm["ball_pos"]
+        obs[13:15] = target_dir_robot * norm["target_dir"]
+        obs[15:16] = target_z_rel * norm["target_z"]
+        obs[16 : 16 + n_dof] = (state["dof_pos"] - ctx.default_dof_pos) * norm["dof_pos"]
+        obs[16 + n_dof : 16 + 2 * n_dof] = state["dof_vel"] * norm["dof_vel"]
+        obs[16 + 2 * n_dof : 16 + 3 * n_dof] = prev_actions
     return obs
 
 
