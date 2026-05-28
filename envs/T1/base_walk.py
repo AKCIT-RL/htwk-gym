@@ -600,9 +600,10 @@ class BaseWalk(BaseTask):
         ]
 
         if extended_obs:
-            # Slots 11:16 — ball/target info: zeros during BaseWalk training so
+            # Slots 11:17 — ball/target info: zeros during BaseWalk training so
             # the network learns locomotion while allocating capacity for kicking.
-            base_parts.append(torch.zeros(self.num_envs, 5, dtype=torch.float, device=self.device))
+            # Slot order: ball_pos_xy(2), target_dir(2), target_z(1), target_distance(1)
+            base_parts.append(torch.zeros(self.num_envs, 6, dtype=torch.float, device=self.device))
 
         base_parts += [
             apply_randomization(self.dof_pos - self.default_dof_pos, self.cfg["noise"].get("dof_pos")) * self.cfg["normalization"]["dof_pos"],

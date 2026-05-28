@@ -1,5 +1,5 @@
 basic:
-  checkpoint: null # set to -1 to load last saved model
+  checkpoint: "logs/T1/T1/Base_Walk_Extended/2026-05-27-22-04-37/nn/model_5000.pth"
   headless: false
   max_iterations: 5000 # set the maximum number of learning iterations to train for
   sim_device: "cuda:0" # device for physics simulation
@@ -10,7 +10,7 @@ basic:
 
 env:
   num_envs: 4096
-  num_observations: 52   # unified layout: 47 base + 5 ball/target slots (matches Base_Walk_Extended)
+  num_observations: 53   # unified layout: 47 base + 6 ball/target slots (matches Base_Walk_Extended)
   num_privileged_obs: 20
   num_actions: 12
   env_spacing: 5.  # not used with plane terrain
@@ -157,6 +157,7 @@ normalization:
   ball_pos: 1.0
   target_dir: 1.0
   target_z: 1.0
+  target_distance: 0.1
 
 noise:
   gravity:
@@ -346,7 +347,7 @@ rewards:
   # Parameters for new kick-related rewards
   ball_target_position: [6.0, 0.0] # Target position for ball to move toward (world frame, z should be ball radius)
   kick_target_angle_range_deg: [-15., 15.] # Range of kick target angles relative to robot forward [deg]
-  kick_target_ref_distance: 8.0             # Distance from ball to target point for direction sampling [m]
+  kick_target_ref_distance_range: [5.0, 10.0]  # Range of distances [m] from ball to target, sampled per episode
   kick_target_z_range: [0.05, 2.0]        # Range of target z height [m] (0.05=ground, 2.0=top of goal)
   lateral_error_ref_x: 3.0                  # X distance [m] at which lateral error is measured
   max_ball_vel_target_reward: 30.0      # Cap for velocity-to-target reward term

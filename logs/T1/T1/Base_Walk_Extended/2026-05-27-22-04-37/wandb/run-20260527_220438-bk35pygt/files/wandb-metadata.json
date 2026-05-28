@@ -1,0 +1,44 @@
+{
+  "os": "Linux-6.17.0-29-generic-x86_64-with-glibc2.29",
+  "python": "CPython 3.8.10",
+  "startedAt": "2026-05-27T22:04:38.141804Z",
+  "args": [
+    "--task",
+    "T1/Base_Walk_Extended",
+    "--headless",
+    "true",
+    "--max_iterations",
+    "5000"
+  ],
+  "program": "train.py",
+  "codePath": "train.py",
+  "codePathLocal": "train.py",
+  "email": "marcospaulo2@discente.ufg.br",
+  "root": "logs/T1/T1/Base_Walk_Extended/2026-05-27-22-04-37",
+  "host": "a4abe360853b",
+  "executable": "/usr/bin/python3",
+  "cpu_count": 24,
+  "cpu_count_logical": 32,
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "gpu_count": 1,
+  "disk": {
+    "/": {
+      "total": "3933618782208",
+      "used": "1870227423232"
+    }
+  },
+  "memory": {
+    "total": "134821654528"
+  },
+  "gpu_nvidia": [
+    {
+      "name": "NVIDIA GeForce RTX 4090",
+      "memoryTotal": "25757220864",
+      "cudaCores": 16384,
+      "architecture": "Ada",
+      "uuid": "GPU-b3c5141d-4bd7-3f92-4fa9-b210ac5d1220"
+    }
+  ],
+  "cudaVersion": "13.0",
+  "writerId": "ot2b6y68sli6dcwd7btab67l1w738z3m"
+}

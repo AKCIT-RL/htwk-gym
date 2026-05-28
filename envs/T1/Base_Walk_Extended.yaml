@@ -10,10 +10,10 @@ basic:
 
 env:
   num_envs: 4096
-  num_observations: 52   # extended layout: 47 base + 5 ball/target slots (zeroed during BaseWalk)
+  num_observations: 53   # extended layout: 47 base + 6 ball/target slots (zeroed during BaseWalk)
   num_privileged_obs: 14
   num_actions: 12
-  extended_obs: true     # append 5 zero slots (ball_pos_xy, target_dir, target_z) for transfer learning
+  extended_obs: true     # append 6 zero slots (ball_pos_xy, target_dir, target_z, target_distance) for transfer learning
   env_spacing: 1.  # not used with plane terrain
 
 runner:

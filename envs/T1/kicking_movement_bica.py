@@ -353,6 +353,7 @@ class KickingMovementBica(BaseTask):
 
         self.last_ball_lin_vel_world = torch.zeros_like(self.body_states[:, -1, 7:10]) # World frame
         self.kick_target_pos_world = torch.zeros(self.num_envs, 3, dtype=torch.float, device=self.device)
+        self.kick_target_distance = torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
         self.kick_detected = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         # True for exactly one step: the step on which kick_detected first flipped True.
         # Used by Chapa subclass for single-shot impact-pose reward; ignored by Bica rewards.
@@ -695,7 +696,14 @@ class KickingMovementBica(BaseTask):
         angles_rad = angles_deg * (np.pi / 180.0)
         robot_yaw = get_euler_xyz(self.root_states[env_ids, 0, 3:7])[2]
         target_angle_world = robot_yaw + angles_rad
-        ref_distance = self.cfg["rewards"].get("kick_target_ref_distance", 8.0)
+        dist_range = self.cfg["rewards"].get(
+            "kick_target_ref_distance_range",
+            [self.cfg["rewards"].get("kick_target_ref_distance", 8.0)] * 2,
+        )
+        ref_distance = torch_rand_float(
+            dist_range[0], dist_range[1], (len(env_ids), 1), device=self.device
+        ).squeeze(1)
+        self.kick_target_distance[env_ids] = ref_distance
         ball_pos = self.root_states[env_ids, 1, 0:3]
         self.kick_target_pos_world[env_ids, 0] = ball_pos[:, 0] + ref_distance * torch.cos(target_angle_world)
         self.kick_target_pos_world[env_ids, 1] = ball_pos[:, 1] + ref_distance * torch.sin(target_angle_world)
@@ -1188,7 +1196,7 @@ class KickingMovementBica(BaseTask):
         self.commands[:, 2:3] = cmd_yaw * (1.0 - near)
 
     def _compute_observations(self):
-        """Computes observations using the unified 52-obs layout shared with BaseWalk_Extended.
+        """Computes observations using the unified 53-obs layout shared with BaseWalk_Extended.
 
         Layout (must match Base_Walk_Extended exactly):
           0: 3  gravity
@@ -1198,9 +1206,10 @@ class KickingMovementBica(BaseTask):
          11:13  ball_pos_xy   ← real: relative ball XY in robot frame
          13:15  target_dir    ← real: kick target direction [cos θ, sin θ] in robot frame
          15:16  target_z      ← real: target z relative to ball z
-         16:28  dof_pos
-         28:40  dof_vel
-         40:52  actions
+         16:17  target_distance ← real: distance from ball to target [m]
+         17:29  dof_pos
+         29:41  dof_vel
+         41:53  actions
         """
         commands_scale = self._commands_scale
 
@@ -1239,11 +1248,13 @@ class KickingMovementBica(BaseTask):
                 target_dir_robot,
                 # 15:16  target z relative to ball
                 target_z_relative,
-                # 16:28  dof_pos
+                # 16:17  target distance (ball to target, metres)
+                self.kick_target_distance.unsqueeze(-1) * self.cfg["normalization"]["target_distance"],
+                # 17:29  dof_pos
                 apply_randomization(self.dof_pos - self.default_dof_pos, self.cfg["noise"].get("dof_pos")) * self.cfg["normalization"]["dof_pos"],
-                # 28:40  dof_vel
+                # 29:41  dof_vel
                 apply_randomization(self.dof_vel, self.cfg["noise"].get("dof_vel")) * self.cfg["normalization"]["dof_vel"],
-                # 40:52  actions
+                # 41:53  actions
                 self.actions,
             ),
             dim=-1,

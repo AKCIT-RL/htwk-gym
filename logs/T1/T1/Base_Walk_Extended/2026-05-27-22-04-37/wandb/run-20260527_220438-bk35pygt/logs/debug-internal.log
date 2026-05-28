@@ -1,0 +1,11 @@
+{"time":"2026-05-27T22:04:38.399686119Z","level":"INFO","msg":"stream: starting","core version":"0.24.2"}
+{"time":"2026-05-27T22:04:38.775658759Z","level":"INFO","msg":"stream: created new stream","id":"bk35pygt"}
+{"time":"2026-05-27T22:04:38.775730203Z","level":"INFO","msg":"stream: started","id":"bk35pygt"}
+{"time":"2026-05-27T22:04:38.77574419Z","level":"INFO","msg":"handler: started","stream_id":"bk35pygt"}
+{"time":"2026-05-27T22:04:38.775762968Z","level":"INFO","msg":"writer: started","stream_id":"bk35pygt"}
+{"time":"2026-05-27T22:04:38.775764442Z","level":"INFO","msg":"sender: started","stream_id":"bk35pygt"}
+{"time":"2026-05-28T00:02:21.912764508Z","level":"INFO","msg":"stream: closing","id":"bk35pygt"}
+{"time":"2026-05-28T00:02:24.482500999Z","level":"INFO","msg":"fileTransfer: Close: file transfer manager closed"}
+{"time":"2026-05-28T00:02:24.734238125Z","level":"INFO","msg":"handler: closed","stream_id":"bk35pygt"}
+{"time":"2026-05-28T00:02:24.734317496Z","level":"INFO","msg":"sender: closed","stream_id":"bk35pygt"}
+{"time":"2026-05-28T00:02:24.734330811Z","level":"INFO","msg":"stream: closed","id":"bk35pygt"}
