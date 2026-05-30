@@ -1,0 +1,11 @@
+{"time":"2026-05-28T13:47:30.780596328Z","level":"INFO","msg":"stream: starting","core version":"0.24.2"}
+{"time":"2026-05-28T13:47:31.190136851Z","level":"INFO","msg":"stream: created new stream","id":"6n7vapod"}
+{"time":"2026-05-28T13:47:31.190188914Z","level":"INFO","msg":"handler: started","stream_id":"6n7vapod"}
+{"time":"2026-05-28T13:47:31.190256412Z","level":"INFO","msg":"stream: started","id":"6n7vapod"}
+{"time":"2026-05-28T13:47:31.190321178Z","level":"INFO","msg":"sender: started","stream_id":"6n7vapod"}
+{"time":"2026-05-28T13:47:31.190324122Z","level":"INFO","msg":"writer: started","stream_id":"6n7vapod"}
+{"time":"2026-05-28T16:41:50.938440009Z","level":"INFO","msg":"stream: closing","id":"6n7vapod"}
+{"time":"2026-05-28T16:41:52.179806542Z","level":"INFO","msg":"fileTransfer: Close: file transfer manager closed"}
+{"time":"2026-05-28T16:41:52.476129423Z","level":"INFO","msg":"handler: closed","stream_id":"6n7vapod"}
+{"time":"2026-05-28T16:41:52.476228974Z","level":"INFO","msg":"sender: closed","stream_id":"6n7vapod"}
+{"time":"2026-05-28T16:41:52.4762381Z","level":"INFO","msg":"stream: closed","id":"6n7vapod"}
