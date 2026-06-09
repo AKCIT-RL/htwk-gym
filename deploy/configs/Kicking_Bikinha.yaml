@@ -36,7 +36,7 @@ common:
 policy:
   policy_path: "./models/kicking_bikinha.pt"
   num_actions: 12
-  num_observations: 52
+  num_observations: 53
 
   # Approach command parameters (match training env rewards config)
   approach_stop_dist: 0.5   # [m] — zero commands when closer than this
@@ -53,6 +53,9 @@ policy:
     ball_pos: 1.0
     target_dir: 1.0
     target_z: 1.0
+    target_distance: 0.1
+
+  kick_target_ref_distance: 8.0  # [m] distance used when vision is not available
 
   control:
     action_scale: 1.0

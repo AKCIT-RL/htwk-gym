@@ -33,6 +33,10 @@ Follow these steps to set up your environment and deploy a policy on the robot:
      ```sh
      $ python deploy_base_walk.py --config=Base_Walk.yaml --net=127.0.0.1
      ```
+   - **For base walk extended (53-obs, transfer-learning backbone):**
+     ```sh
+     $ python deploy_base_walk_extended.py --config=Base_Walk_Extended.yaml --net=127.0.0.1
+     ```
    - **For parameterized walking (with real-time editing):**
      ```sh
      $ python deploy_parameter_walk.py --config=Parameter_Walk.yaml --net=127.0.0.1
@@ -40,7 +44,13 @@ Follow these steps to set up your environment and deploy a policy on the robot:
      ```
      - Open your browser at `http://<robot_ip>:8501` to access the web-based control interface.
      - Use interface sliders to adjust gait parameters and commands in real time.
-   - **For kicking (bikinha / toe-kick):**
+   - **For kicking (main policy — 48 obs):**
+     ```sh
+     $ python deploy_kicking.py --config=Kicking.yaml --net=127.0.0.1 \
+         --ball_x 0.35 --ball_y 0.0 --kick_angle_deg 0 --target_z 0.0
+     ```
+     See [Kicking Deployment](#kicking-deployment) below for details.
+   - **For kicking (bikinha / toe-kick — 53 obs):**
      ```sh
      $ python deploy_kicking_bikinha.py --config=Kicking_Bikinha.yaml --net=127.0.0.1 \
          --ball_x 0.35 --ball_y 0.0 --kick_angle_deg 0 --target_z 0.0
@@ -53,9 +63,39 @@ Follow these steps to set up your environment and deploy a policy on the robot:
 
 ---
 
+### Kicking Deployment
+
+The **Kicking** policy (48 obs) is the main kicking policy. It receives ball position and a kick target, and executes the full kicking motion without an explicit gait signal.
+
+#### Parameters
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--config` | (required) | Config file in `configs/`. Use `Kicking.yaml`. |
+| `--net` | `127.0.0.1` | Network interface for SDK. Use `127.0.0.1` on the Intel Board. |
+| `--ball_x` | `0.35` | Ball X position in robot frame (metres, positive = forward). |
+| `--ball_y` | `0.0` | Ball Y position in robot frame (metres, positive = left). |
+| `--kick_angle_deg` | `0` | Kick direction in robot frame (degrees, 0 = straight ahead). |
+| `--target_z` | `0.0` | Target z height relative to ball (metres, 0 = ground kick). |
+
+#### Setup for a quick test
+
+1. Place the ball approximately **35 cm in front** of the robot's feet, centred.
+2. Run:
+   ```sh
+   $ python deploy_kicking.py --config=Kicking.yaml --net=127.0.0.1
+   ```
+3. The robot will kick the ball straight ahead.
+
+#### Using with vision (future)
+
+To plug in a ball detector, override `_get_ball_position()` in `deploy_kicking.py`.
+
+---
+
 ### Kicking Bikinha Deployment
 
-The **Kicking Bikinha** policy performs a toe-kick ("biquinha") on a stationary ball. The robot walks toward the ball, aligns, and kicks it toward a target direction.
+The **Kicking Bikinha** policy (53 obs) performs a toe-kick ("biquinha") on a stationary ball. The robot walks toward the ball, aligns, and kicks it toward a target direction.
 
 #### Parameters
 
@@ -117,7 +157,17 @@ To plug in a ball detector, override `_get_ball_position()` in `deploy_kicking_b
 ### Notes
 
 - **Configuration files:**  
-  All config files are in `configs/` (e.g. `Base_Walk.yaml`, `Parameter_Walk.yaml`, `Kicking_Bikinha.yaml`). Each contains model paths, control gains, normalization, and limits.
+  All config files are in `configs/` (`Base_Walk.yaml`, `Base_Walk_Extended.yaml`, `Parameter_Walk.yaml`, `Kicking.yaml`, `Kicking_Bikinha.yaml`). Each contains model paths, control gains, normalization, and limits.
+
+- **Observation layouts:**
+
+  | Policy | Script | Obs | Model |
+  |--------|--------|-----|-------|
+  | Base Walk | `deploy_base_walk.py` | 47 | `models/base_walk.pt` |
+  | Base Walk Extended | `deploy_base_walk_extended.py` | 53 | `models/base_walk_extended.pt` |
+  | Parameter Walk | `deploy_parameter_walk.py` | 44 | `models/parameter_walk.pt` |
+  | Kicking | `deploy_kicking.py` | 48 | `models/kicking.pt` |
+  | Kicking Bikinha | `deploy_kicking_bikinha.py` | 53 | `models/kicking_bikinha.pt` |
 
 - **Real-Time Observation Controls:**  
   The Streamlit interface lets you adjust gait frequency, foot yaw, body pitch/roll, feet offset, and walk commands on the fly (requires `deploy_parameter_walk.py`).

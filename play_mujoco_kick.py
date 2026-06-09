@@ -341,7 +341,7 @@ def build_obs(cfg: dict, ctx: SimCtx, state: dict, prev_actions: np.ndarray,
               target_world: np.ndarray) -> np.ndarray:
     """Build the kick observation. Dispatches by num_observations:
       48 → T1/Kicking layout (no commands, has target_distance slot)
-      52 → T1/Kicking_Movement_Bica/Chapa layout (with approach commands)
+      53 → T1/Kicking_Movement_Bica/Chapa layout (with approach commands + target_distance)
     """
     norm = cfg["normalization"]
     num_obs = cfg["env"]["num_observations"]
@@ -389,7 +389,7 @@ def build_obs(cfg: dict, ctx: SimCtx, state: dict, prev_actions: np.ndarray,
         obs[12 + n_dof : 12 + 2 * n_dof] = state["dof_vel"] * norm["dof_vel"]
         obs[12 + 2 * n_dof : 12 + 3 * n_dof] = prev_actions
     else:
-        # T1/Kicking_Movement_Bica/Chapa layout (52 dims, with approach commands)
+        # T1/Kicking_Movement_Bica/Chapa layout (53 dims, with approach commands + target_distance)
         # [0:3]   proj_grav
         # [3:6]   base_ang_vel
         # [6:9]   approach commands [vx, vy, wz]
@@ -397,9 +397,10 @@ def build_obs(cfg: dict, ctx: SimCtx, state: dict, prev_actions: np.ndarray,
         # [11:13] relative_ball_pos[:2]
         # [13:15] target_dir_robot
         # [15:16] target_z_rel
-        # [16:28] dof_pos
-        # [28:40] dof_vel
-        # [40:52] actions
+        # [16:17] target_distance (ball to target, metres)
+        # [17:29] dof_pos
+        # [29:41] dof_vel
+        # [41:53] actions
         rew = cfg.get("rewards", {})
         stop_dist = float(rew.get("approach_cmd_stop_dist", 0.5))
         max_speed = float(rew.get("approach_cmd_max_speed", 1.0))
@@ -411,6 +412,7 @@ def build_obs(cfg: dict, ctx: SimCtx, state: dict, prev_actions: np.ndarray,
         cmd_yaw = np.arctan2(to_ball_local[1], to_ball_local[0]) * yaw_gain
         near = 1.0 if dist < stop_dist else 0.0
         cmd = np.array([cmd_xy[0], cmd_xy[1], cmd_yaw], dtype=np.float32) * (1.0 - near)
+        kick_target_dist = float(np.linalg.norm(ball_to_target))
         obs[0:3] = state["proj_grav"] * norm["gravity"]
         obs[3:6] = state["base_ang_vel"] * norm["ang_vel"]
         obs[6] = cmd[0] * norm["lin_vel"]
@@ -420,10 +422,11 @@ def build_obs(cfg: dict, ctx: SimCtx, state: dict, prev_actions: np.ndarray,
         obs[10] = 0.0
         obs[11:13] = relative_ball_pos[:2] * norm["ball_pos"]
         obs[13:15] = target_dir_robot * norm["target_dir"]
-        obs[15:16] = target_z_rel * norm["target_z"]
-        obs[16 : 16 + n_dof] = (state["dof_pos"] - ctx.default_dof_pos) * norm["dof_pos"]
-        obs[16 + n_dof : 16 + 2 * n_dof] = state["dof_vel"] * norm["dof_vel"]
-        obs[16 + 2 * n_dof : 16 + 3 * n_dof] = prev_actions
+        obs[15] = target_z_rel * norm["target_z"]
+        obs[16] = kick_target_dist * norm["target_distance"]
+        obs[17 : 17 + n_dof] = (state["dof_pos"] - ctx.default_dof_pos) * norm["dof_pos"]
+        obs[17 + n_dof : 17 + 2 * n_dof] = state["dof_vel"] * norm["dof_vel"]
+        obs[17 + 2 * n_dof : 17 + 3 * n_dof] = prev_actions
     return obs
 
 
@@ -1120,10 +1123,18 @@ def build_argparser():
                    help="Task name relative to envs/, e.g. T1/Kicking_Movement_Chapa.")
     p.add_argument("--checkpoint", type=str, default=None)
 
-    # Viewer-only args
+    # Viewer / record args
     p.add_argument("--target-angle-deg", type=float, default=0.0)
     p.add_argument("--target-distance", type=float, default=8.0)
     p.add_argument("--target-z-rel", type=float, default=0.0)
+    p.add_argument("--record", type=str, default=None, metavar="OUTPUT.mp4",
+                   help="Render offscreen and save video to this path (no viewer needed).")
+    p.add_argument("--record-steps", type=int, default=600,
+                   help="Number of control-rate steps to record (default 600).")
+    p.add_argument("--record-fps", type=int, default=50,
+                   help="Output video frame rate (default 50).")
+    p.add_argument("--record-width", type=int, default=1280)
+    p.add_argument("--record-height", type=int, default=720)
 
     # Evaluation
     p.add_argument("--evaluate", action="store_true",
@@ -1158,13 +1169,86 @@ def build_argparser():
     return p
 
 
+def run_record(cfg, model, ctx, args):
+    """Render the policy offscreen and save to an mp4 via imageio."""
+    import imageio
+
+    num_obs = cfg["env"]["num_observations"]
+    num_act = cfg["env"]["num_actions"]
+    norm = cfg["normalization"]
+    clip_actions = float(norm["clip_actions"])
+    action_scale = float(cfg["control"]["action_scale"])
+    decimation = int(cfg["control"]["decimation"])
+
+    init_rot_xyzw = np.array(cfg["init_state"]["rot"], dtype=np.float32)
+    target_angle_world = quat_to_yaw(init_rot_xyzw) + np.deg2rad(args.target_angle_deg)
+    target_distance = float(args.target_distance)
+    target_z_rel = float(args.target_z_rel)
+
+    ctx.reset(cfg)
+    actions = np.zeros(num_act, dtype=np.float32)
+    dof_targets = ctx.default_dof_pos.copy()
+
+    out_path = args.record
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+
+    w, h = args.record_width, args.record_height
+    fps = args.record_fps
+    total_steps = args.record_steps * decimation  # physics steps
+
+    # Increase the model's offscreen framebuffer so Renderer doesn't complain
+    # about width > offwidth (MuJoCo default is 640).
+    ctx.mj_model.vis.global_.offwidth = max(w, ctx.mj_model.vis.global_.offwidth)
+    ctx.mj_model.vis.global_.offheight = max(h, ctx.mj_model.vis.global_.offheight)
+
+    print(f"[record] {args.record_steps} control steps × decimation {decimation} "
+          f"= {total_steps} physics steps → {out_path}  ({w}×{h} @ {fps}fps)")
+
+    with mujoco.Renderer(ctx.mj_model, height=h, width=w) as renderer, \
+         imageio.get_writer(out_path, fps=fps, codec="libx264",
+                            quality=8, macro_block_size=None) as writer:
+
+        renderer.update_scene(ctx.mj_data)
+        # Point camera at robot from a nice angle
+        cam = mujoco.MjvCamera()
+        cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+        cam.lookat[:] = ctx.mj_data.qpos[:3]
+        cam.distance = 3.5
+        cam.azimuth = 135.0
+        cam.elevation = -20.0
+
+        for it in range(total_steps):
+            state = read_robot_state(ctx)
+            if it % decimation == 0:
+                bp = ctx.mj_data.qpos[ctx.ball_qpos_adr : ctx.ball_qpos_adr + 3]
+                target_w = np.array([
+                    bp[0] + target_distance * np.cos(target_angle_world),
+                    bp[1] + target_distance * np.sin(target_angle_world),
+                    bp[2] + target_z_rel,
+                ], dtype=np.float32)
+                obs = build_obs(cfg, ctx, state, actions, target_w)
+                with torch.no_grad():
+                    dist_out = model.act(torch.from_numpy(obs).unsqueeze(0))
+                    actions[:] = dist_out.loc.squeeze(0).numpy()
+                actions[:] = np.clip(actions, -clip_actions, clip_actions)
+                dof_targets[:] = ctx.default_dof_pos + action_scale * actions
+                # track camera on robot
+                cam.lookat[:] = state["base_pos"]
+            pd_step(ctx, dof_targets)
+
+            # Render every decimation-th physics step (matches control rate)
+            if it % decimation == 0:
+                renderer.update_scene(ctx.mj_data, camera=cam)
+                frame = renderer.render()
+                writer.append_data(frame)
+
+    print(f"[record] saved → {out_path}")
+
+
 def main():
     args = build_argparser().parse_args()
 
     cfg = load_cfg(args.task)
-    if cfg["env"]["num_observations"] != 52:
-        print(f"[warn] Expected num_observations=52, got "
-              f"{cfg['env']['num_observations']}.")
     ckpt_path = find_checkpoint(args.task, args.checkpoint)
     print(f"Loading checkpoint: {ckpt_path}")
     model = load_model(cfg, ckpt_path)
@@ -1172,7 +1256,9 @@ def main():
     print(f"Built runtime MJCF: {ctx.runtime_xml}  "
           f"(nq={ctx.mj_model.nq}, nu={ctx.mj_model.nu})")
 
-    if args.evaluate:
+    if args.record:
+        run_record(cfg, model, ctx, args)
+    elif args.evaluate:
         run_evaluation(cfg, model, ctx, args, args.task, ckpt_path)
     else:
         run_viewer(cfg, model, ctx, args)

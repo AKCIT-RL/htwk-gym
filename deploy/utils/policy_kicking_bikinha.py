@@ -1,6 +1,6 @@
 """Policy inference for the Kicking Bikinha (toe-kick) policy on the real robot.
 
-Observation layout — 52 dimensions (must match training exactly):
+Observation layout — 53 dimensions (must match training exactly):
     0: 3   projected gravity (robot frame)
     3: 6   base angular velocity (robot frame)
     6: 9   walk commands [vx, vy, wz] — auto-computed toward ball, zero when near
@@ -8,9 +8,10 @@ Observation layout — 52 dimensions (must match training exactly):
    11:13   ball position XY in robot frame
    13:15   kick target direction [cos θ, sin θ] in robot frame
    15:16   target z relative to ball z
-   16:28   dof_pos − default_dof_pos
-   28:40   dof_vel
-   40:52   last actions
+   16:17   target distance (ball-to-target, metres)
+   17:29   dof_pos − default_dof_pos
+   29:41   dof_vel
+   41:53   last actions
 
 The ball position and kick target direction must be provided externally
 (e.g. from a vision system or hardcoded for testing).
@@ -134,14 +135,17 @@ class PolicyKickingBikinha:
         # 15:16  target z relative to ball z
         self.obs[15] = target_z_rel * norm["target_z"]
 
-        # 16:28  dof_pos − default (legs only, indices 11:23)
-        self.obs[16:28] = (dof_pos[11:] - self.default_dof_pos[11:]) * norm["dof_pos"]
+        # 16:17  target distance (ball to target, metres)
+        self.obs[16] = self.cfg["policy"].get("kick_target_ref_distance", 8.0) * norm["target_distance"]
 
-        # 28:40  dof_vel (legs only)
-        self.obs[28:40] = dof_vel[11:] * norm["dof_vel"]
+        # 17:29  dof_pos − default (legs only, indices 11:23)
+        self.obs[17:29] = (dof_pos[11:] - self.default_dof_pos[11:]) * norm["dof_pos"]
 
-        # 40:52  last actions
-        self.obs[40:52] = self.actions
+        # 29:41  dof_vel (legs only)
+        self.obs[29:41] = dof_vel[11:] * norm["dof_vel"]
+
+        # 41:53  last actions
+        self.obs[41:53] = self.actions
 
         # Inference
         obs_tensor = torch.from_numpy(self.obs).unsqueeze(0)
