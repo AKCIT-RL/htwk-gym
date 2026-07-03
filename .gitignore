@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+_soccer_field_runtime.xml
+videos/

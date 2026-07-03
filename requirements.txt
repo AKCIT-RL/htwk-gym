@@ -1,0 +1,7 @@
+ImageIO==2.37.3
+imageio-ffmpeg==0.6.0
+mujoco==3.10.0
+numpy==2.5.0
+pytest==9.1.1
+PyYAML==6.0.3
+torch==2.12.1
