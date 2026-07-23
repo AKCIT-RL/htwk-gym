@@ -4,3 +4,13 @@ __pycache__/
 .pytest_cache/
 _soccer_field_runtime.xml
 videos/
+IsaacGym_Preview_4_Package.tar.gz
+MimicKit/output/
+
+# artefatos pesados / dados externos (nao versionar)
+*.pdf
+MimicKit_Data.zip
+GMR/
+bvh/
+logs/
+wandb/

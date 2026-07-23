@@ -1,0 +1,4 @@
+[submodule "MimicKit"]
+	path = MimicKit
+	url = https://github.com/AKCIT-RL/MimicKit
+	branch = dev/marcos
