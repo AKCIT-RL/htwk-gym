@@ -128,13 +128,22 @@ def main():
     env._engine.set_root_rot(env_ids, ball_id, quat0)
     env._engine.set_root_vel(env_ids, ball_id, roll_vel)
     env._engine.set_root_ang_vel(env_ids, ball_id, zero3)
+    max_moving_time = torch.zeros([NUM_ENVS], device=DEVICE)
     for _ in range(150):  # 5 s
         env.step(zero_a)
+        max_moving_time = torch.maximum(max_moving_time, env._ball_moving_time)
     roll_speed = torch.linalg.norm(env._engine.get_root_vel(ball_id)[:, 0:2], dim=-1)
     roll_dist = (env._get_ball_pos()[:, 0] - off[:, 0]).max().item() - (-3.0)
     print("INFO ball speed 5 s after 3 m/s push: {:.3f}..{:.3f} m/s, dist {:.2f} m".format(
         roll_speed.min().item(), roll_speed.max().item(), roll_dist))
     check(roll_dist > 1.0, "pushed ball actually rolled ({:.2f} m)".format(roll_dist))
+
+    # ball motion timers: moving-time armed while the ball rolled (episode
+    # resets can legitimately zero the live timer, so track the running max);
+    # the cleared-on-reset half is checked after test 5's reset
+    check(bool((max_moving_time > 0.0).all().item()),
+          "ball motion timers armed during the push (max {:.2f} s)".format(
+              max_moving_time.max().item()))
 
     # --- 5. robot-ball collision ---------------------------------------------
     # Deterministic contact test: teleport the ball into overlap with the
@@ -142,6 +151,9 @@ def main():
     # (lateral velocity and/or blocked fall). Without collisions the ball is
     # in free fall: v_xy = 0 and v_z = -g*t after t seconds.
     env.reset()
+    check(bool((env._ball_moving_time == 0.0).all().item())
+          and bool((env._ball_still_time == 0.0).all().item()),
+          "ball motion timers cleared on reset")
     char_id = env._get_char_id()
     root_pos = env._engine.get_root_pos(char_id)
     overlap = root_pos.clone()  # ball center = pelvis center

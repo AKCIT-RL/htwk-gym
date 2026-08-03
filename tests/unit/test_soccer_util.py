@@ -49,6 +49,44 @@ def test_ball_steer_command_degenerate_overlap():
     assert cmd[0, 2] == pytest.approx(0.0, abs=1e-6)
 
 
+def test_kick_direction_reward_projection_and_threshold():
+    ball_pos = torch.tensor([[0.0, 0.0, 0.11]] * 4)
+    goal_pos = torch.tensor([[5.0, 0.0]] * 4)  # goal along +x
+    ball_vel = torch.tensor([[5.0, 0.0, 0.0],    # straight at goal, fast
+                             [0.0, 5.0, 0.0],    # purely lateral
+                             [-5.0, 0.0, 0.0],   # backward
+                             [0.5, 0.0, 0.0]])   # toward goal but below min_vel
+    t_moving = torch.zeros(4)
+    r = soccer_util.compute_kick_direction_reward(ball_pos, ball_vel, goal_pos,
+                                                  1.0, 0.2, t_moving, 30.0)
+    assert r[0] == pytest.approx(4.0, abs=1e-5)   # 5 - 1, no decay at t=0
+    assert r[1] == pytest.approx(0.0, abs=1e-6)
+    assert r[2] == pytest.approx(0.0, abs=1e-6)
+    assert r[3] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_kick_direction_reward_decay_and_cap():
+    ball_pos = torch.tensor([[0.0, 0.0, 0.11]] * 3)
+    goal_pos = torch.tensor([[5.0, 0.0]] * 3)
+    ball_vel = torch.tensor([[5.0, 0.0, 0.0],
+                             [5.0, 0.0, 0.0],
+                             [100.0, 0.0, 0.0]])
+    t_moving = torch.tensor([0.0, 0.2, 0.0])
+    r = soccer_util.compute_kick_direction_reward(ball_pos, ball_vel, goal_pos,
+                                                  1.0, 0.2, t_moving, 30.0)
+    assert r[1] == pytest.approx(4.0 * math.exp(-1.0), abs=1e-5)
+    assert r[2] == pytest.approx(30.0)  # capped
+
+
+def test_kick_direction_reward_degenerate_ball_on_goal():
+    ball_pos = torch.tensor([[5.0, 0.0, 0.11]])
+    goal_pos = torch.tensor([[5.0, 0.0]])
+    ball_vel = torch.tensor([[3.0, 0.0, 0.0]])
+    r = soccer_util.compute_kick_direction_reward(ball_pos, ball_vel, goal_pos,
+                                                  1.0, 0.2, torch.zeros(1), 30.0)
+    assert torch.all(torch.isfinite(r))
+
+
 def test_observations_identity_heading():
     root_pos = torch.tensor([[1.0, 2.0, 0.8]])
     root_rot = _yaw_quat(0.0)
@@ -340,3 +378,36 @@ def test_determinism():
     b = soccer_util.compute_soccer_observations(root_pos, root_rot, ball_pos,
                                                 goal_pos, goal_dir)
     assert torch.equal(a, b)
+
+
+def test_field_line_segments_geometry():
+    import numpy as np
+
+    length, width, goal_w = 14.0, 9.0, 2.6
+    starts, ends, cols = soccer_util.build_field_line_segments(length, width, goal_w)
+
+    assert starts.shape == ends.shape
+    assert starts.shape[1] == 3 and cols.shape == (starts.shape[0], 4)
+    assert starts.dtype == np.float32 and cols.dtype == np.float32
+    assert np.isfinite(starts).all() and np.isfinite(ends).all()
+
+    # everything stays inside the field footprint
+    pts = np.concatenate([starts, ends], axis=0)
+    assert np.abs(pts[:, 0]).max() <= 0.5 * length + 1e-5
+    assert np.abs(pts[:, 1]).max() <= 0.5 * width + 1e-5
+
+    # ground markings sit at a single small z; only goal posts rise above
+    ground = pts[pts[:, 2] < 0.1]
+    assert np.allclose(ground[:, 2], ground[0, 2])
+    assert pts[:, 2].max() > 1.0  # posts exist
+
+    # goal mouth: green segments on the +x goal line span exactly goal_width
+    green = np.abs(cols[:, 1] - 0.9) < 1e-6
+    gpts = np.concatenate([starts[green], ends[green]], axis=0)
+    assert np.allclose(gpts[:, 0], 0.5 * length)
+    assert np.isclose(gpts[:, 1].max() - gpts[:, 1].min(), goal_w)
+
+    # left/right symmetry of the white ground markings
+    white = ~green
+    wpts = np.concatenate([starts[white], ends[white]], axis=0)
+    assert np.allclose(np.sort(wpts[:, 1]), np.sort(-wpts[:, 1]), atol=1e-5)

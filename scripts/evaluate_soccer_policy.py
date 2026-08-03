@@ -4,6 +4,10 @@ Layers (per the project evaluation plan):
   1. task metrics: goals/ep, out-of-bounds/ep, falls/ep, episode length,
      time to first ball touch, best ball->goal progress;
   2. kick events: ball speed gain while a foot is in contact;
+  2b. kick impact metrics (T1 kicking-env style): angular error toward the
+      goal at impact, impact speed, ball state at impact, engage latency,
+      kicking foot, and per-kick outcome (goal <= 5 s / OOB <= 2 s /
+      fall <= 1 s after the kick);
   3. style coverage: nearest-clip classification of rollout disc obs
      against per-clip demo windows (detects mode collapse / averaging);
   4. (visual layer is the interactive viewer, not this script).
@@ -32,6 +36,11 @@ import util.mp_util as mp_util
 import util.util as util
 
 KICK_SPEED_GAIN = 0.5    # m/s ball speed gain in foot contact = kick event
+BALL_STILL_SPEED = 0.1   # m/s: below this the ball counts as stationary
+ENGAGE_DIST = 1.0        # m: ball "within reach" for the engage-latency timer
+OUTCOME_GOAL_S = 5.0     # kick -> goal attribution window
+OUTCOME_OOB_S = 2.0      # kick -> out-of-bounds attribution window
+OUTCOME_FALL_S = 1.0     # kick -> fall attribution window
 STYLE_DEMOS_PER_CLIP = 512
 STYLE_SUBSAMPLE = 5      # keep every k-th rollout disc obs window
 
@@ -140,6 +149,27 @@ def main():
     fin = {"goals": [], "oob": [], "kicks": [], "len": [], "first_touch": [],
            "progress": [], "falls": 0, "episodes": 0}
 
+    # kick impact stats (one entry per kick event)
+    kick_stats = {"speed": [], "ang_err": [], "on_still": [], "foot": [],
+                  "latency": []}
+    # per-env in-episode event log for kick outcome attribution
+    ep_events = [{"kicks": [], "goals": [], "oobs": []} for _ in range(num_envs)]
+    outcomes = {"total": 0, "goal": 0, "oob": 0, "fall": 0}
+    # ball-within-reach-and-still timer (engage latency)
+    reach_still_t = torch.zeros(num_envs, device=device)
+
+    def close_episode_events(e, fall_time):
+        ev = ep_events[e]
+        for kt in ev["kicks"]:
+            outcomes["total"] += 1
+            if any(kt < gt <= kt + OUTCOME_GOAL_S for gt in ev["goals"]):
+                outcomes["goal"] += 1
+            if any(kt < ot <= kt + OUTCOME_OOB_S for ot in ev["oobs"]):
+                outcomes["oob"] += 1
+            if fall_time is not None and kt < fall_time <= kt + OUTCOME_FALL_S:
+                outcomes["fall"] += 1
+        ep_events[e] = {"kicks": [], "goals": [], "oobs": []}
+
     style_windows = []
 
     def init_episode_stats(env_ids):
@@ -170,18 +200,56 @@ def main():
 
             # ball touch / kick detection
             ball_pos = env._get_ball_pos()
-            ball_speed = torch.linalg.norm(
-                env._engine.get_root_vel(ball_id)[:, 0:2], dim=-1)
+            ball_vel = env._engine.get_root_vel(ball_id)[:, 0:2]
+            ball_speed = torch.linalg.norm(ball_vel, dim=-1)
             body_pos = env._engine.get_body_pos(char_id)
             in_contact = torch.zeros(num_envs, device=device, dtype=torch.bool)
+            foot_dists = []
             for i in range(len(foot_ids)):
                 foot_pos = body_pos[:, foot_ids[i], :]
                 d = torch.linalg.norm(foot_pos - ball_pos, dim=-1)
+                foot_dists.append(d)
                 in_contact |= d < env._ball_contact_dist
             first = in_contact & (ep_first_touch < 0.0)
             ep_first_touch[first] = env._time_buf[first]
             kick = in_contact & ((ball_speed - prev_ball_speed) > KICK_SPEED_GAIN)
             ep_kicks += kick.float()
+
+            # --- kick impact metrics (T1 style, measured at the kick step) --
+            kick_ids = kick.nonzero(as_tuple=False).flatten()
+            if len(kick_ids) > 0:
+                to_goal = env._goal_pos[kick_ids] - ball_pos[kick_ids, 0:2]
+                to_goal = to_goal / torch.clamp_min(
+                    torch.linalg.norm(to_goal, dim=-1, keepdim=True), 1e-6)
+                v = ball_vel[kick_ids]
+                v_norm = torch.clamp_min(torch.linalg.norm(v, dim=-1), 1e-6)
+                cos_err = torch.clamp((v * to_goal).sum(dim=-1) / v_norm, -1.0, 1.0)
+                ang_err = torch.rad2deg(torch.acos(cos_err))
+                nearest_foot = torch.stack(foot_dists, dim=-1)[kick_ids].argmin(dim=-1)
+                on_still = prev_ball_speed[kick_ids] < BALL_STILL_SPEED
+                lat = reach_still_t[kick_ids]  # pre-update: excludes this step
+                for j, e in enumerate(kick_ids.tolist()):
+                    kick_stats["speed"].append(ball_speed[e].item())
+                    kick_stats["ang_err"].append(ang_err[j].item())
+                    kick_stats["on_still"].append(bool(on_still[j].item()))
+                    kick_stats["foot"].append(int(nearest_foot[j].item()))
+                    if lat[j].item() > 0.0:
+                        kick_stats["latency"].append(lat[j].item())
+                    ep_events[e]["kicks"].append(env._time_buf[e].item())
+
+            # goal / OOB event times for outcome attribution
+            for e in env._goal_scored_buf.nonzero(as_tuple=False).flatten().tolist():
+                ep_events[e]["goals"].append(env._time_buf[e].item())
+            for e in env._ball_oob_buf.nonzero(as_tuple=False).flatten().tolist():
+                ep_events[e]["oobs"].append(env._time_buf[e].item())
+
+            # engage-latency timer: ball within reach and stationary
+            root_pos = env._engine.get_root_pos(char_id)
+            near_still = (torch.linalg.norm(
+                ball_pos[:, 0:2] - root_pos[:, 0:2], dim=-1) < ENGAGE_DIST) \
+                & (ball_speed < BALL_STILL_SPEED)
+            reach_still_t = torch.where(near_still, reach_still_t + dt,
+                                        torch.zeros_like(reach_still_t))
             prev_ball_speed = ball_speed
 
             # ball->goal progress (best over the episode)
@@ -207,11 +275,15 @@ def main():
                     fin["progress"].append(ep_best_progress[e].item())
                     if ep_first_touch[e].item() >= 0.0:
                         fin["first_touch"].append(ep_first_touch[e].item())
+                    fall_time = None
                     if done[e].item() == 1:  # DoneFlags.FAIL
                         fin["falls"] += 1
+                        fall_time = env._time_buf[e].item()
+                    close_episode_events(e, fall_time)
                 obs_r, info_r = env.reset(done_ids)
                 obs, info = obs_r, info_r
                 init_episode_stats(done_ids)
+                reach_still_t[done_ids] = 0.0
                 prev_ball_speed = torch.linalg.norm(
                     env._engine.get_root_vel(ball_id)[:, 0:2], dim=-1)
 
@@ -240,6 +312,33 @@ def main():
     print("")
     print("-- kick events (contact + ball speed gain > {:.1f} m/s) --".format(KICK_SPEED_GAIN))
     print("kicks/episode:  {:.3f} +- {:.3f}".format(*stat("kicks")))
+    nk = len(kick_stats["speed"])
+    if nk > 0:
+        speeds = np.asarray(kick_stats["speed"])
+        angs = np.asarray(kick_stats["ang_err"])
+        print("")
+        print("-- kick impact metrics ({:d} kicks) --".format(nk))
+        print("impact speed:   {:.2f} +- {:.2f} m/s (p90 {:.2f})".format(
+            speeds.mean(), speeds.std(), np.percentile(speeds, 90)))
+        print("speed buckets:  <1: {:.1%}   1-3: {:.1%}   >3 m/s: {:.1%}".format(
+            float((speeds < 1).mean()), float(((speeds >= 1) & (speeds <= 3)).mean()),
+            float((speeds > 3).mean())))
+        print("angular error:  {:.1f} +- {:.1f} deg   <=20deg: {:.1%}   <=45deg: {:.1%}".format(
+            angs.mean(), angs.std(), float((angs <= 20).mean()), float((angs <= 45).mean())))
+        print("ball at impact: still {:.1%} / rolling {:.1%}".format(
+            float(np.mean(kick_stats["on_still"])), 1.0 - float(np.mean(kick_stats["on_still"]))))
+        feet = np.asarray(kick_stats["foot"])
+        print("kicking foot:   left {:.1%} / right {:.1%}".format(
+            float((feet == 0).mean()), float((feet == 1).mean())))
+        if len(kick_stats["latency"]) > 0:
+            print("engage latency: {:.2f} +- {:.2f} s (ball still & <{:.1f} m -> kick; {:d} kicks)".format(
+                float(np.mean(kick_stats["latency"])), float(np.std(kick_stats["latency"])),
+                ENGAGE_DIST, len(kick_stats["latency"])))
+        if outcomes["total"] > 0:
+            t = outcomes["total"]
+            print("kick outcomes:  goal<={:.0f}s: {:.1%}   OOB<={:.0f}s: {:.1%}   fall<={:.0f}s: {:.1%}   (of {:d} kicks)".format(
+                OUTCOME_GOAL_S, outcomes["goal"] / t, OUTCOME_OOB_S, outcomes["oob"] / t,
+                OUTCOME_FALL_S, outcomes["fall"] / t, t))
     print("")
     print("-- style coverage (nearest demo clip per rollout window) --")
     rollout_obs = torch.cat(style_windows, dim=0)
