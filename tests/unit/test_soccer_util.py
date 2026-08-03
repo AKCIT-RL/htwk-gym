@@ -469,3 +469,49 @@ def test_anneal_scale_step_schedule_for_eval():
     # degenerate end <= start behaves as a step at start
     assert soccer_util.compute_anneal_scale(4e6, 5e6, 5e6) == 1.0
     assert soccer_util.compute_anneal_scale(5e6, 5e6, 5e6) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# virtual perception (Frente E, paper section 9)
+# ---------------------------------------------------------------------------
+
+def test_perception_noise_std_formula():
+    dist = torch.tensor([0.0, 1.0, 7.0])
+    std = soccer_util.compute_perception_noise_std(dist, 0.124, 0.149)
+    assert torch.allclose(std, torch.tensor([0.149, 0.273, 1.017]), atol=1e-6)
+
+
+def test_detection_prob_plateau_decay_and_fov():
+    dist = torch.tensor([1.0, 7.0, 8.5, 10.0, 12.0])
+    in_fov = torch.ones(5, dtype=torch.bool)
+    p = soccer_util.compute_ball_detection_prob(dist, in_fov, 0.9, 7.0, 3.0)
+    assert torch.allclose(p, torch.tensor([0.9, 0.9, 0.45, 0.0, 0.0]), atol=1e-6)
+    # outside the FOV the probability is zero regardless of distance
+    p_out = soccer_util.compute_ball_detection_prob(dist, torch.zeros(5, dtype=torch.bool),
+                                                    0.9, 7.0, 3.0)
+    assert torch.all(p_out == 0.0)
+
+
+def test_ball_in_fov_bearing():
+    root_pos = torch.zeros([4, 3])
+    root_rot = _yaw_quat(0.0, 4)  # heading +x
+    ball_pos = torch.tensor([[2.0, 0.0, 0.11],    # dead ahead
+                             [0.0, 2.0, 0.11],    # 90 deg left
+                             [-2.0, 0.0, 0.11],   # behind
+                             [2.0, 1.0, 0.11]])   # ~26.6 deg left
+    half = math.radians(60.0)  # 120 deg full FOV
+    in_fov = soccer_util.compute_ball_in_fov(root_pos, root_rot, ball_pos, half)
+    assert in_fov.tolist() == [True, False, False, True]
+    # fov <= 0 disables the check
+    all_in = soccer_util.compute_ball_in_fov(root_pos, root_rot, ball_pos, 0.0)
+    assert torch.all(all_in)
+
+
+def test_ball_in_fov_follows_heading():
+    # robot rotated 90 deg left: a ball at +y is now dead ahead
+    root_pos = torch.zeros([1, 3])
+    root_rot = _yaw_quat(math.pi / 2.0, 1)
+    ball_pos = torch.tensor([[0.0, 3.0, 0.11]])
+    in_fov = soccer_util.compute_ball_in_fov(root_pos, root_rot, ball_pos,
+                                             math.radians(60.0))
+    assert bool(in_fov[0])
