@@ -151,3 +151,26 @@ do usuário (2026-08-01): "não vamos mudar nada relacionado".
 - **2026-08-01 (2)** — Divisão de trabalho ratificada pelo usuário: colega faz B;
   nós fazemos C e E agora; D/F/G/H/A/I ficam para depois. Constatado que E sozinha
   não quebra o contrato de obs (slots da bola já existem).
+- **2026-08-01 (3)** — Frentes **C e D implementadas e validadas** (usuário adiantou
+  a D). C: randomização com ranges HTWK deploy-proven — bola (massa ×[0.7,1.3],
+  fricção [0.2,1.2], restituição [0.1,0.9]), robô (fricção [0.1,2.0], massa base
+  ×[0.8,1.2], CoM ±0.1 m, demais massas ×[0.98,1.02]), empurrões (vel std 0.3 m/s
+  a cada 5–10 s) e terreno irregular ±2 cm em **tiles por campo** (borda achatada
+  em z=0). D: `steer_anneal_start/end_samples` escala linearmente a obs de steering
+  1→0 (config: 5M→15M). Lição Isaac Gym: trimesh global + `env_spacing>0` quebra o
+  broadphase GPU (colisão dependia do env, não da posição mundial); solução =
+  `env_spacing 0` + atores criados já espalhados nos campos (empilhar na origem no
+  build estoura `foundLostAggregatePairsCapacity` a 2048 envs). Gates:
+  `validate_soccer_randomization.py` 16/16, regressão E2–E4 OK, 65/65 CPU, smoke
+  2048 envs limpo. Commits: MimicKit `0508035`, htwk-gym `56707d7`. Treino C
+  lançado (`soccer-smoke-c`, wandb `zwjhp584`, 20M, warm-start P1+P2); D treina
+  em seguida (warm-start P4b@it200; eval com `mcwamp_g1_soccer_env_d_eval.yaml`,
+  steering zerado — pergunta é "remover a muleta sem colapso", não bater P4b).
+- **2026-08-01 (4)** — **Treino C concluído e avaliado** (~1h25, 20M samples).
+  Env padrão sem perturbação (vs P4b@it200 1.61 gols/ep, 6.2% quedas, 70.4°):
+  C@it305 = **2.11 gols/ep, 3.1% quedas, 59.1° erro angular, 13.2 chutes/ep** —
+  a randomização melhorou até o desempenho nominal. Sob perturbação completa
+  (env C: terreno+rand+push), quedas **26.5% vs 41.8%** do P4b (−37% rel.),
+  gols 0.60 vs 0.51, episódios 50.1s vs 42.4s. **Novo melhor ckpt:
+  `output/mcwamp_g1_soccer_smoke_c_seed1/int_models/model_0000000305.pt`.**
+  Treino D lançado (`soccer-smoke-d`, warm-start P4b@it200, anneal 5M→15M).

@@ -2,6 +2,7 @@ import math
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 import torch
 
@@ -411,3 +412,60 @@ def test_field_line_segments_geometry():
     white = ~green
     wpts = np.concatenate([starts[white], ends[white]], axis=0)
     assert np.allclose(np.sort(wpts[:, 1]), np.sort(-wpts[:, 1]), atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# field grid layout / uneven-ground extent
+# ---------------------------------------------------------------------------
+
+def test_field_offsets_grid_layout():
+    # 5 envs -> 3 cols x 2 rows, pitch = field + 2*sep
+    offsets = soccer_util.compute_field_offsets(5, 14.0, 9.0, 2.0)
+    assert offsets.shape == (5, 2)
+    assert offsets.dtype == np.float32
+    px, py = 18.0, 13.0
+    expected = np.array([[-px, -0.5 * py], [0.0, -0.5 * py], [px, -0.5 * py],
+                         [-px, 0.5 * py], [0.0, 0.5 * py]], dtype=np.float32)
+    assert np.allclose(offsets, expected)
+    # grid is centered
+    assert abs(offsets[:, 0].max() + offsets[:, 0].min()) < 1e-4
+
+    # no two fields overlap: distinct offsets at least one pitch apart per axis
+    d = np.abs(offsets[:, None, :] - offsets[None, :, :])
+    far = (d[..., 0] > px - 1e-4) | (d[..., 1] > py - 1e-4)
+    np.fill_diagonal(far, True)
+    assert far.all()
+
+
+def test_field_grid_extent_covers_all_fields():
+    for n in (1, 2, 5, 8, 33):
+        offsets = soccer_util.compute_field_offsets(n, 14.0, 9.0, 2.0)
+        size_x, size_y = soccer_util.compute_field_grid_extent(n, 14.0, 9.0, 2.0)
+        # every field (center +- half pitch) inside the extent
+        assert np.abs(offsets[:, 0]).max() + 0.5 * 18.0 <= 0.5 * size_x + 1e-4
+        assert np.abs(offsets[:, 1]).max() + 0.5 * 13.0 <= 0.5 * size_y + 1e-4
+
+
+# ---------------------------------------------------------------------------
+# steering anneal schedule
+# ---------------------------------------------------------------------------
+
+def test_anneal_scale_disabled_and_linear():
+    # disabled: start < 0
+    assert soccer_util.compute_anneal_scale(10_000_000, -1.0, -1.0) == 1.0
+    # before start
+    assert soccer_util.compute_anneal_scale(4_999_999, 5e6, 15e6) == 1.0
+    # linear midpoint
+    assert soccer_util.compute_anneal_scale(10e6, 5e6, 15e6) == pytest.approx(0.5)
+    # end and beyond
+    assert soccer_util.compute_anneal_scale(15e6, 5e6, 15e6) == 0.0
+    assert soccer_util.compute_anneal_scale(30e6, 5e6, 15e6) == 0.0
+
+
+def test_anneal_scale_step_schedule_for_eval():
+    # start == end == 0: zero from the very first sample (eval configs)
+    assert soccer_util.compute_anneal_scale(0, 0.0, 0.0) == 0.0
+    assert soccer_util.compute_anneal_scale(1e9, 0.0, 0.0) == 0.0
+    # degenerate end <= start behaves as a step at start
+    assert soccer_util.compute_anneal_scale(4e6, 5e6, 5e6) == 1.0
+    assert soccer_util.compute_anneal_scale(5e6, 5e6, 5e6) == 0.0
