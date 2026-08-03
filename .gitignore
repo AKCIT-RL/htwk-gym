@@ -14,3 +14,19 @@ GMR/
 bvh/
 logs/
 wandb/
+
+# ambiente local do dev (nao versionar)
+.bash_profile
+.bashrc
+.gitconfig
+.idea
+.mcp.json
+.profile
+.ripgreprc
+.vscode
+.zprofile
+.zshrc
+
+# docs internos locais (nao publicar)
+docs/06-relatorio-deploy-politicas-mimickit.md
+docs/briefing-colega-rl.md
