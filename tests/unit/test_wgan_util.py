@@ -12,6 +12,8 @@ from learning.wgan_util import (
     compute_interp_grad_penalty,
     compute_wamp_disc_rewards,
     compute_wasserstein_disc_loss,
+    normalize_scores,
+    update_score_stats_ema,
 )
 
 
@@ -127,6 +129,81 @@ def test_rewards_scale():
     scores = torch.zeros(5)
     r = compute_wamp_disc_rewards(scores, 0.4, 2.0)
     assert torch.allclose(r, torch.full((5,), 1.0))
+
+
+def test_score_norm_revives_reward_spread_for_pinned_scores():
+    # Regression for the observed failure: agent logits drifted to ~-20 and the
+    # raw tanh reward collapsed to a constant ~0. With standardization the
+    # reward must keep a usable spread regardless of the absolute offset.
+    torch.manual_seed(0)
+    scores = -20.0 + 0.5 * torch.randn(4096)
+
+    raw_r = compute_wamp_disc_rewards(scores, 0.4, 1.0)
+    assert torch.std(raw_r).item() < 1e-5  # dead signal without normalization
+
+    mean, var = update_score_stats_ema(torch.zeros(1), torch.ones(1), scores, alpha=1.0)
+    z = normalize_scores(scores, mean, var)
+    norm_r = compute_wamp_disc_rewards(z, 0.4, 1.0)
+    assert torch.std(norm_r).item() > 0.1
+    assert torch.all(norm_r >= 0.0) and torch.all(norm_r <= 1.0)
+
+
+def test_score_norm_invariant_to_affine_drift():
+    # Standardized rewards must be identical when scores suffer an affine drift,
+    # provided the stats track the drifted distribution.
+    torch.manual_seed(1)
+    base = torch.randn(2048)
+    drifted = -17.0 + 3.0 * base
+
+    m0, v0 = update_score_stats_ema(torch.zeros(1), torch.ones(1), base, alpha=1.0)
+    m1, v1 = update_score_stats_ema(torch.zeros(1), torch.ones(1), drifted, alpha=1.0)
+
+    r0 = compute_wamp_disc_rewards(normalize_scores(base, m0, v0), 0.4, 1.0)
+    r1 = compute_wamp_disc_rewards(normalize_scores(drifted, m1, v1), 0.4, 1.0)
+    assert torch.allclose(r0, r1, atol=1e-5)
+
+
+def test_score_norm_preserves_ranking():
+    torch.manual_seed(2)
+    scores = -20.0 + torch.randn(512)
+    m, v = update_score_stats_ema(torch.zeros(1), torch.ones(1), scores, alpha=1.0)
+    r = compute_wamp_disc_rewards(normalize_scores(scores, m, v), 0.4, 1.0)
+    order_scores = torch.argsort(scores)
+    order_rewards = torch.argsort(r)
+    assert torch.equal(order_scores, order_rewards)
+
+
+def test_ema_update_math_and_tracking():
+    # alpha=1 adopts batch stats exactly.
+    batch = torch.tensor([1.0, 3.0])
+    m, v = update_score_stats_ema(torch.zeros(1), torch.ones(1), batch, alpha=1.0)
+    assert m.item() == pytest.approx(2.0)
+    assert v.item() == pytest.approx(1.0)  # population variance of [1, 3]
+
+    # Partial alpha blends old and new.
+    m2, v2 = update_score_stats_ema(m, v, torch.tensor([4.0, 4.0]), alpha=0.5)
+    assert m2.item() == pytest.approx(0.5 * 2.0 + 0.5 * 4.0)
+    assert v2.item() == pytest.approx(0.5 * 1.0 + 0.5 * 0.0)
+
+    # Repeated updates converge to a drifted stationary distribution.
+    m3, v3 = torch.zeros(1), torch.ones(1)
+    torch.manual_seed(3)
+    for _ in range(200):
+        m3, v3 = update_score_stats_ema(m3, v3, -20.0 + 0.5 * torch.randn(4096), alpha=0.05)
+    assert m3.item() == pytest.approx(-20.0, abs=0.1)
+    assert v3.item() == pytest.approx(0.25, abs=0.05)
+
+
+def test_score_norm_degenerate_std_no_nan():
+    # Identical scores -> zero variance; min_std clamp must avoid NaN/Inf and
+    # z-clip must bound the output.
+    scores = torch.full((128,), -20.0)
+    m, v = update_score_stats_ema(torch.zeros(1), torch.ones(1), scores, alpha=1.0)
+    z = normalize_scores(scores, m, v)
+    assert torch.all(torch.isfinite(z))
+    assert torch.all(z.abs() <= 4.0)
+    r = compute_wamp_disc_rewards(z, 0.4, 1.0)
+    assert torch.all(torch.isfinite(r))
 
 
 def test_disc_update_converges_on_separable_data():
