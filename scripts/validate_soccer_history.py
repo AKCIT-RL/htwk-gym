@@ -134,6 +134,12 @@ def main():
           torch.allclose(a1, a2, atol=1e-6),
           "max diff {:.2e}".format((a1 - a2).abs().max().item()))
 
+    # --- asymmetric critic (F3): no perception -> no critic_obs ---------------
+    check("no perception: env does not publish critic_obs",
+          "critic_obs" not in info and not env.has_critic_obs())
+    check("no perception: agent keeps symmetric critic path",
+          not agent._use_critic_obs)
+
     print("=" * 58)
     if (failures):
         print("FAILURES: {}".format(failures))
