@@ -174,3 +174,50 @@ do usuário (2026-08-01): "não vamos mudar nada relacionado".
   gols 0.60 vs 0.51, episódios 50.1s vs 42.4s. **Novo melhor ckpt:
   `output/mcwamp_g1_soccer_smoke_c_seed1/int_models/model_0000000305.pt`.**
   Treino D lançado (`soccer-smoke-d`, warm-start P4b@it200, anneal 5M→15M).
+- **2026-08-01 (5)** — **Treino D concluído e avaliado** (steering zerado,
+  `mcwamp_g1_soccer_env_d_eval.yaml`). Controle P4b@it200 sem steering:
+  **colapso total** — 100% quedas, 0 gols, episódios de 13.9s (a muleta era
+  estrutural para o equilíbrio). D@it305 sem steering: **9.4% quedas, episódios
+  de 56.4s** — o anneal removeu a dependência física com sucesso. Porém a tarefa
+  degradou: 0.06 gols/ep, 1.75 chutes/ep — a política fica estável mas passiva;
+  o steering também carregava o comportamento "ir até a bola". Veredito parcial:
+  muleta removível sem colapso físico, mas o engajamento na tarefa precisa ser
+  reaprendido. Próximo passo recomendado (D2): anneal a partir do **C@it305**
+  (política mais forte) com mais orçamento pós-anneal (ex.: 30M, anneal 5M→15M,
+  15M finais com steering zerado), antes de concluir a frente.
+- **2026-08-01 (6)** — **D2 reprovado no gate; D3 quase lá; D4a no ar.**
+  D2 (C@305 + anneal 5M→15M, 30M): engajamento morre **durante** o fade
+  (@13M: 0.78 chutes/ep) e nunca volta (final: 1.02 chutes/ep, 0.02 gols);
+  pior até com steering (0.63 gols vs 2.11 do C@305). Recompensa auditada: não
+  depende do steering — a política usava a obs como sinal interno de "andar" e
+  cai no **atrator passivo** (PPO on-policy não redescobre navegação). Veredito:
+  anneal gradual NÃO funciona. D3 (command-free desde o passo 0, warm-start
+  P1+P2, env C, 30M): **0.50 gols/ep, 3.9 chutes/ep, 1.6% quedas, 61.6°** sem
+  nunca ver comando — confirma que evitar a formação da dependência funciona,
+  mas engajamento fraco/bimodal (±5.4). D4 (sugestão do usuário): currículo de
+  approach — D4a overfita "andar até a bola" (w 50→250, 10M, command-free) e
+  D4b restaura w=50 (20M, warm-start D4a). D4a rodando (`soccer-smoke-d4a`).
+- **2026-08-01 (7)** — **D4 reprovado; D5 (continuação do D3) no ar.** D4a fez
+  o esperado: navegação excelente (engage latency 0.79s vs 2.26s do D3) mas
+  chute suprimido (1.03 chutes/ep, 115°) — com w=250, afastar a bola custa caro.
+  D4b (w restaurado a 50, 20M): supressão NÃO reverteu (1.09 chutes/ep, 0.09
+  gols, 0% quedas) — mesma histerese do D2: comportamento suprimido numa fase
+  não volta com PPO on-policy. **Lição consolidada: currículos de duas fases
+  (anneal ou reward) criam hábitos irreversíveis; treinar direto no regime
+  final funciona melhor.** Curva do D3 medida: 13M→30M = 0.06→0.50 gols/ep,
+  1.1→3.9 chutes/ep — longe do platô. D5 = D3 + 30M extras (mesma config,
+  variável única = orçamento), rodando (`soccer-smoke-d5`).
+- **2026-08-02** — **Frente D ESTACIONADA por decisão do usuário** (após
+  inspeção visual no viewer). D5 interrompido @9M da extensão (~39M totais):
+  3.75 chutes/ep, 0.42 gols/ep — igual ao D3, ganho marginal. Diagnóstico
+  visual+métrico do porquê o robô "orbita" a bola sem chutar no regime
+  command-free: (i) approach reward potential-based zera ao chegar perto —
+  sem gradiente de "agora chute"; (ii) rewards de chute só pagam após a bola
+  se mover; (iii) **causa raiz: prior AMP só tem walk/run — armar chute é
+  OOD/punido pelo discriminador** (mesmo teto de ~60-70° em todas as
+  variantes). Conclusões da frente: muleta É removível sem colapso (D3
+  navega e marca command-free), mas fechar o gate exige a Frente A (dataset
+  de chute). Ckpt command-free de referência: D5 model.pt (~39M,
+  `output/mcwamp_g1_soccer_smoke_d5_seed1/model.pt`). Melhor geral segue
+  C@it305. Próximo: H (avaliação estilo paper) e E (percepção virtual),
+  conforme §4.
