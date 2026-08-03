@@ -172,6 +172,53 @@ def main():
 
     style_windows = []
 
+    # --- Frente H: ball-placement bookkeeping -----------------------------
+    # Every ball placement (episode start / soft reset after goal or OOB)
+    # opens a "trial": we bin its field region (3x3 grid, x oriented toward
+    # the goal) and the robot->ball approach angle, then score whether that
+    # placement ended in a goal and how long the first kick took.
+    GRID = 3
+    hl = 0.5 * env._field_length
+    hw = 0.5 * env._field_width
+    grid_total = np.zeros([GRID, GRID], dtype=np.int64)
+    grid_goals = np.zeros([GRID, GRID], dtype=np.int64)
+    ANGLE_BINS = [0.0, 45.0, 90.0, 135.0, 180.0]
+    kick_time_by_angle = [[] for _ in range(len(ANGLE_BINS) - 1)]
+    plc_cell = torch.zeros(num_envs, 2, dtype=torch.long)          # (row, col)
+    plc_angle = torch.zeros(num_envs)                              # deg
+    plc_time = torch.zeros(num_envs, device=device)
+    plc_kicked = torch.zeros(num_envs, dtype=torch.bool)
+
+    def record_placements(env_ids):
+        """Open a trial for each env in env_ids using the CURRENT (fresh)
+        ball position. Call right after a reset/soft reset."""
+        ball = env._get_ball_pos()[env_ids, 0:2]
+        local = ball - env._field_offset[env_ids]
+        gdir = env._goal_dir[env_ids]
+        x_goal = (local * gdir).sum(dim=-1)          # + toward the goal
+        col = torch.clamp(((x_goal + hl) / (2.0 * hl) * GRID).long(), 0, GRID - 1)
+        row = torch.clamp(((local[:, 1] + hw) / (2.0 * hw) * GRID).long(), 0, GRID - 1)
+        plc_cell[env_ids] = torch.stack([row.cpu(), col.cpu()], dim=-1)
+        # approach angle: between (ball - robot) and (goal - ball); 0 deg =
+        # robot straight behind the ball relative to the goal
+        root = env._engine.get_root_pos(char_id)[env_ids, 0:2]
+        v_rb = ball - root
+        v_bg = env._goal_pos[env_ids] - ball
+        v_rb = v_rb / torch.clamp_min(torch.linalg.norm(v_rb, dim=-1, keepdim=True), 1e-6)
+        v_bg = v_bg / torch.clamp_min(torch.linalg.norm(v_bg, dim=-1, keepdim=True), 1e-6)
+        ang = torch.rad2deg(torch.acos(torch.clamp((v_rb * v_bg).sum(dim=-1), -1.0, 1.0)))
+        plc_angle[env_ids] = ang.cpu()
+        plc_time[env_ids] = env._time_buf[env_ids]
+        plc_kicked[env_ids] = False
+
+    def close_placements(env_ids, scored):
+        """Close trials: scored is a bool tensor aligned with env_ids."""
+        for j, e in enumerate(env_ids.tolist()):
+            r, c = plc_cell[e, 0].item(), plc_cell[e, 1].item()
+            grid_total[r, c] += 1
+            if bool(scored[j]):
+                grid_goals[r, c] += 1
+
     def init_episode_stats(env_ids):
         ball_pos = env._get_ball_pos()[env_ids]
         goal_pos = env._goal_pos[env_ids]
@@ -185,6 +232,7 @@ def main():
 
     obs, info = env.reset()
     init_episode_stats(torch.arange(num_envs, device=device, dtype=torch.long))
+    record_placements(torch.arange(num_envs, device=device, dtype=torch.long))
     prev_ball_speed = torch.linalg.norm(
         env._engine.get_root_vel(ball_id)[:, 0:2], dim=-1)
 
@@ -236,12 +284,27 @@ def main():
                     if lat[j].item() > 0.0:
                         kick_stats["latency"].append(lat[j].item())
                     ep_events[e]["kicks"].append(env._time_buf[e].item())
+                    # Frente H: first kick of the current placement
+                    if not bool(plc_kicked[e]):
+                        plc_kicked[e] = True
+                        t_kick = env._time_buf[e].item() - plc_time[e].item()
+                        ang = plc_angle[e].item()
+                        b = min(int(ang / 45.0), len(ANGLE_BINS) - 2)
+                        kick_time_by_angle[b].append(t_kick)
 
             # goal / OOB event times for outcome attribution
             for e in env._goal_scored_buf.nonzero(as_tuple=False).flatten().tolist():
                 ep_events[e]["goals"].append(env._time_buf[e].item())
             for e in env._ball_oob_buf.nonzero(as_tuple=False).flatten().tolist():
                 ep_events[e]["oobs"].append(env._time_buf[e].item())
+
+            # Frente H: goal/OOB soft-resets close the trial and (the env has
+            # already teleported the ball) open the next one
+            soft = torch.logical_or(env._goal_scored_buf, env._ball_oob_buf)
+            soft_ids = soft.nonzero(as_tuple=False).flatten()
+            if len(soft_ids) > 0:
+                close_placements(soft_ids, env._goal_scored_buf[soft_ids].cpu())
+                record_placements(soft_ids)
 
             # engage-latency timer: ball within reach and stationary
             root_pos = env._engine.get_root_pos(char_id)
@@ -283,6 +346,9 @@ def main():
                 obs_r, info_r = env.reset(done_ids)
                 obs, info = obs_r, info_r
                 init_episode_stats(done_ids)
+                # Frente H: episode end closes the open trial without a goal
+                close_placements(done_ids, torch.zeros(len(done_ids), dtype=torch.bool))
+                record_placements(done_ids)
                 reach_still_t[done_ids] = 0.0
                 prev_ball_speed = torch.linalg.norm(
                     env._engine.get_root_vel(ball_id)[:, 0:2], dim=-1)
@@ -345,6 +411,32 @@ def main():
     fracs = nearest_clip_fractions(rollout_obs, [d.cpu() for d in demos])
     for name, f in zip(clip_names, fracs):
         print("{:30s} {:.1%}".format(name, f))
+
+    # ------------------- Frente H: paper-style breakdowns ---------------------
+    print("")
+    print("-- goal rate by ball-placement region (3x3 field grid) --")
+    print("   cols: far from goal -> near goal | rows: y- -> y+ | goal%/trials")
+    for r in range(GRID):
+        cells = []
+        for c in range(GRID):
+            t = grid_total[r, c]
+            rate = grid_goals[r, c] / t if t > 0 else float("nan")
+            cells.append("{:5.1%}/{:<4d}".format(rate, t) if t > 0 else "   -  /0   ")
+        print("   " + "  ".join(cells))
+    total_trials = int(grid_total.sum())
+    print("   overall: {:.1%} of {:d} ball placements ended in a goal".format(
+        grid_goals.sum() / max(total_trials, 1), total_trials))
+    print("")
+    print("-- time to first kick vs approach angle at placement --")
+    print("   (angle between robot->ball and ball->goal; 0 deg = straight behind)")
+    for b in range(len(ANGLE_BINS) - 1):
+        v = kick_time_by_angle[b]
+        if len(v) > 0:
+            print("   {:3.0f}-{:3.0f} deg: {:5.2f} +- {:4.2f} s  ({:d} placements)".format(
+                ANGLE_BINS[b], ANGLE_BINS[b + 1], float(np.mean(v)), float(np.std(v)), len(v)))
+        else:
+            print("   {:3.0f}-{:3.0f} deg:   (no kicked placements)".format(
+                ANGLE_BINS[b], ANGLE_BINS[b + 1]))
     print("==========================================================")
     return
 

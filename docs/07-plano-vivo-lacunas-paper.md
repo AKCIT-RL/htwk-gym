@@ -221,3 +221,32 @@ do usuário (2026-08-01): "não vamos mudar nada relacionado".
   `output/mcwamp_g1_soccer_smoke_d5_seed1/model.pt`). Melhor geral segue
   C@it305. Próximo: H (avaliação estilo paper) e E (percepção virtual),
   conforme §4.
+- **2026-08-03** — **Frente E implementada e gated; treino direto REPROVADO
+  (requer Frente F).** Pipeline de câmera virtual (§9 do paper) em
+  `task_soccer_env.py`: ruído σ=0.124d+0.149, latência N(116,18²) ms com
+  **ring buffer K=8** (latência > período ⇒ vários frames em voo; slot único
+  nunca entrega — bug pego no gate), frequência N(25.36,1.06²) Hz por
+  episódio, detecção 90%≤7 m decaindo até 10 m, FOV 120° no heading,
+  zero-order hold + máscara real na obs (contrato 249 dims intacto; rewards
+  usam estado verdadeiro). Gates: 12/12 GPU
+  (`validate_soccer_perception.py`; ruído medido 0.522 vs 0.521 esperado),
+  69/69 CPU, regressão C+D 16/16 e E2-E4 OK. **Treino E (20M, warm-start
+  P1+P2, protocolo idêntico ao C): política colapsa** — E@305 cai 67% no env
+  E e 77% no env limpo; E@200 igual (64%/62% — não é divergência tardia);
+  C@305 sob percepção cai 100%. Train_Return E -726 vs C +203. Diagnóstico:
+  política **sem memória** não filtra ruído de ~0.5-0.8 m a 25 Hz + latência
+  116 ms — o paper resolve com encoder temporal/história (nossa Frente F).
+  Conclusão: infra E validada e commitada (MimicKit 9972ccc); treinar com
+  percepção ligada fica bloqueado até a Frente F (ou história de obs).
+  1º lançamento do treino morreu na it0 (exit 1 transitório); repro rodou
+  limpo. Artefatos: `output/soccer_e_diag/`.
+- **2026-08-03** — **Frente H implementada e VALIDADA.**
+  `evaluate_soccer_policy.py` estendido: grade 3×3 de taxa de gol por região
+  do posicionamento da bola (x orientado ao gol) + time-to-first-kick por bin
+  de ângulo de aproximação (0/45/90/135/180°). Regressão: C@305 no env padrão
+  reproduz exatamente o baseline (2.109 gols/ep, 3.1% quedas). Números H do
+  C@305 (env C uneven, no_perturb): 9.8% dos 459 posicionamentos viram gol;
+  melhor célula = meio-campo longe do gol (25.4%); time-to-kick cresce com o
+  ângulo (3.8 s @45-90° → 5.1 s @135-180°). Melhor geral segue C@it305.
+  Próximo: **Frente A (dataset de chute — usuário produzindo em paralelo)**;
+  Frente F sobe de prioridade (desbloqueia E).
