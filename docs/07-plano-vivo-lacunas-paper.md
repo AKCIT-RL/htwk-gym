@@ -250,3 +250,36 @@ do usuário (2026-08-01): "não vamos mudar nada relacionado".
   ângulo (3.8 s @45-90° → 5.1 s @135-180°). Melhor geral segue C@it305.
   Próximo: **Frente A (dataset de chute — usuário produzindo em paralelo)**;
   Frente F sobe de prioridade (desbloqueia E).
+- **2026-08-03 (2)** — **Frente F-lite implementada; F1 APROVADO; F2 reprovado;
+  F3 (critic assimétrico) implementado e no ar.**
+  - **Infra F:** `task_obs_history_steps` (default 0 = contrato 249 intacto)
+    anexa H×12 dims de história do bloco de tarefa (steer 5 + soccer 6 + mask 1)
+    → 369 dims com H=10. Roll único por passo em `_update_task`, refill por
+    broadcast em `_reset_envs`, `_compute_obs` sem mutação (é usada como probe
+    de shape por `get_obs_space`). Warm-start por expansão zero-init do ckpt
+    (`expand_checkpoint_history.py`: 120 colunas zeradas em actor/critic/aux +
+    obs_norm mean 0/std 1) — equivalência exata provada no gate. Gates:
+    `validate_soccer_history.py` 10/10 + regressão 249 (2 processos — Isaac Gym
+    só permite 1 sim/processo), percepção 12/12, CPU 69/69.
+  - **F1 (env C + hist10, sem percepção, 20M):** história é não-inferior e até
+    superior — par justo plane (env com pushes): **1.64 vs 1.27 gols/ep** do
+    C@305, 67.8° vs 70.7°; uneven: **0.72/19.1%/9.3** vs 0.59/25%/8.6.
+    Nota: o baseline "2.11/3.1%" do C@305 era no yaml padrão sem pushes;
+    Train_Return negativo é normal (C@305 = −690; usar Test_Return: 435 vs 203).
+  - **F2 (env E + hist10, 20M): REPROVADO** — 64.1% quedas (73.4% no env
+    limpo), 0.20 gols, 1.3 chutes: colapso global igual ao E. Janela de 10
+    frames no ator NÃO basta; o critic compartilhado vendo a bola
+    ruidosa/latente envenena o valor globalmente.
+  - **F3 (critic assimétrico privilegiado, Table 2 do paper):** env publica
+    `info["critic_obs"]` quando `virtual_perception=true` (layout do ator com
+    bola VERDADEIRA no bloco + história privilegiada, mask=1); MCWAMP roteia os
+    critics goal+aux para `critic_obs` com normalizador próprio (`_critic_obs_norm`),
+    ator intacto; load tolerante (seed do `_obs_norm` para ckpts antigos, drop
+    das chaves em env sem percepção). Gate `validate_soccer_asym_critic.py`
+    13/13 (inclui 1 iteração de treino end-to-end). **Resultado F3@305:**
+    quedas **18.8%** no env com percepção (E/F2: 64-67%) e 21.5% no limpo —
+    envenenamento global ELIMINADO, quedas no nível do F1 (19.1%); 0.32 gols,
+    5.1 chutes. Test_Return +507 vs −623 do F2. 18.8% ∈ [10%,25%] → gate manda
+    **estender orçamento**: F3b (+20M a partir do F3 model.pt) rodando.
+    Aprova <10% quedas; se estagnar >25%, próximo degrau = encoder-decoder
+    completo do paper.
