@@ -283,3 +283,21 @@ do usuário (2026-08-01): "não vamos mudar nada relacionado".
     **estender orçamento**: F3b (+20M a partir do F3 model.pt) rodando.
     Aprova <10% quedas; se estagnar >25%, próximo degrau = encoder-decoder
     completo do paper.
+- **2026-08-03 (3)** — **F3b REPROVADO; Frente F encerrada com F3@305 como
+  referência sob percepção.** A extensão +20M derrete o engajamento
+  monotonicamente (chutes/ep 5.1 → 1.9 @200 → 1.2 @305; gols 0.32 → 0.06)
+  enquanto as quedas melhoram (18.8% → 10.6%): é o **atrator passivo** da
+  Frente D reaparecendo — sob bola ruidosa/latente, "não chutar" é ótimo
+  local (o prior AMP não tem chute e os rewards de chute pagam pouco vs o
+  risco). Mais orçamento só aprofunda o hábito (consistente com a lição de
+  D2/D4: PPO on-policy não reverte comportamento suprimido). Conclusões da
+  Frente F: (i) história de task-obs é não-inferior e vira ganho no env limpo
+  (F1 > C); (ii) critic assimétrico é NECESSÁRIO para treinar sob percepção
+  (F3 elimina o colapso 64→19% de quedas); (iii) o teto de engajamento sob
+  percepção é o mesmo teto da Frente D — a causa raiz é o motion prior sem
+  chute, não a percepção. **Refs:** sem percepção = F1@305
+  (`output/mcwamp_g1_soccer_smoke_f1_seed1/int_models/model_0000000305.pt`);
+  sob percepção = F3@305
+  (`output/mcwamp_g1_soccer_smoke_f3_seed1/int_models/model_0000000305.pt`).
+  Encoder-decoder do paper fica para depois da **Frente A** (dataset de
+  chute), que ataca a causa raiz. Próximo: Frente A.
