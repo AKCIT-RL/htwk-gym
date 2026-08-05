@@ -141,11 +141,23 @@ def main() -> None:
         default=240,
         help="Override legacy GMR FPS metadata (the old exporter truncated 240 to 239).",
     )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=MIMICKIT_ROOT / "data/motions/g1/g1_wave_clamp.pkl",
+        help="Destination MimicKit motion (filtered/resampled).",
+    )
+    parser.add_argument(
+        "--raw-output",
+        type=Path,
+        default=MIMICKIT_ROOT / "data/motions/g1/g1_wave_raw.pkl",
+        help="Destination MimicKit motion at source FPS, unfiltered.",
+    )
     args = parser.parse_args()
 
     asset_dir = MIMICKIT_ROOT / "data/assets/g1"
-    motion_path = MIMICKIT_ROOT / "data/motions/g1/g1_wave_clamp.pkl"
-    raw_motion_path = MIMICKIT_ROOT / "data/motions/g1/g1_wave_raw.pkl"
+    motion_path = args.output
+    raw_motion_path = args.raw_output
 
     with args.motion.open("rb") as stream:
         data = pickle.load(stream)
