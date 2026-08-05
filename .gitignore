@@ -30,3 +30,6 @@ wandb/
 # docs internos locais (nao publicar)
 docs/06-relatorio-deploy-politicas-mimickit.md
 docs/briefing-colega-rl.md
+chute/
+CMU.tar.bz2
+smplx_lockedhead_*.zip
