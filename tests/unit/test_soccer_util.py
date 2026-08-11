@@ -515,3 +515,56 @@ def test_ball_in_fov_follows_heading():
     in_fov = soccer_util.compute_ball_in_fov(root_pos, root_rot, ball_pos,
                                              math.radians(60.0))
     assert bool(in_fov[0])
+
+
+# ---------------------------------------------------------------------------
+# episode termination on ball events (paper 4.1)
+# ---------------------------------------------------------------------------
+
+NULL, FAIL, SUCC, TIME = 0, 1, 2, 3
+
+
+def test_ball_event_dones_goal_succ_oob_fail():
+    done = torch.tensor([NULL, NULL, NULL], dtype=torch.long)
+    goal = torch.tensor([True, False, False])
+    oob = torch.tensor([False, True, False])
+    new_done, soft = soccer_util.apply_ball_event_dones(done, goal, oob,
+                                                        NULL, SUCC, FAIL)
+    assert new_done.tolist() == [SUCC, FAIL, NULL]
+    assert soft.tolist() == [True, True, False]
+    # input must not be mutated in place (caller writes back explicitly)
+    assert done.tolist() == [NULL, NULL, NULL]
+
+
+def test_ball_event_dones_fall_and_timeout_take_precedence():
+    # a fall (FAIL) or timeout (TIME) already decided by the caller wins:
+    # the env gets a FULL reset, never the soft ball-only one
+    done = torch.tensor([FAIL, TIME, FAIL, TIME], dtype=torch.long)
+    goal = torch.tensor([True, True, False, False])
+    oob = torch.tensor([False, False, True, True])
+    new_done, soft = soccer_util.apply_ball_event_dones(done, goal, oob,
+                                                        NULL, SUCC, FAIL)
+    assert new_done.tolist() == [FAIL, TIME, FAIL, TIME]
+    assert not soft.any()
+
+
+def test_ball_event_dones_no_events_noop():
+    done = torch.tensor([NULL, TIME, FAIL], dtype=torch.long)
+    goal = torch.zeros(3, dtype=torch.bool)
+    oob = torch.zeros(3, dtype=torch.bool)
+    new_done, soft = soccer_util.apply_ball_event_dones(done, goal, oob,
+                                                        NULL, SUCC, FAIL)
+    assert new_done.tolist() == [NULL, TIME, FAIL]
+    assert not soft.any()
+
+
+def test_ball_event_dones_matches_env_flag_convention():
+    # env guarantees oob &= ~goal; the goal branch must win when both are
+    # passed anyway (goal is applied to its own mask, oob to its own)
+    done = torch.tensor([NULL], dtype=torch.long)
+    goal = torch.tensor([True])
+    oob = torch.tensor([False])
+    new_done, soft = soccer_util.apply_ball_event_dones(done, goal, oob,
+                                                        NULL, SUCC, FAIL)
+    assert new_done.tolist() == [SUCC]
+    assert soft.tolist() == [True]

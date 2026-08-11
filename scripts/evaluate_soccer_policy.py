@@ -8,6 +8,8 @@ Layers (per the project evaluation plan):
       goal at impact, impact speed, ball state at impact, engage latency,
       kicking foot, and per-kick outcome (goal <= 5 s / OOB <= 2 s /
       fall <= 1 s after the kick);
+  2c. behavioral metrics: controlled touches/dribbling, approach-angle
+      improvement, reach time by distance, and fall phase;
   3. style coverage: nearest-clip classification of rollout disc obs
      against per-clip demo windows (detects mode collapse / averaging);
   4. (visual layer is the interactive viewer, not this script).
@@ -23,6 +25,8 @@ import os
 import sys
 
 MIMICKIT_ROOT = "/workspace/MimicKit"
+HTWK_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, HTWK_ROOT)
 sys.path.insert(0, os.path.join(MIMICKIT_ROOT, "mimickit"))
 os.chdir(MIMICKIT_ROOT)
 
@@ -34,6 +38,13 @@ import envs.env_builder as env_builder
 import learning.agent_builder as agent_builder
 import util.mp_util as mp_util
 import util.util as util
+from utils.soccer_behavior_metrics import (
+    DISTANCE_BINS_M,
+    FALL_PHASES,
+    approach_angle_improvement,
+    classify_fall_phase,
+    distance_bin,
+)
 
 KICK_SPEED_GAIN = 0.5    # m/s ball speed gain in foot contact = kick event
 BALL_STILL_SPEED = 0.1   # m/s: below this the ball counts as stationary
@@ -43,6 +54,8 @@ OUTCOME_OOB_S = 2.0      # kick -> out-of-bounds attribution window
 OUTCOME_FALL_S = 1.0     # kick -> fall attribution window
 STYLE_DEMOS_PER_CLIP = 512
 STYLE_SUBSAMPLE = 5      # keep every k-th rollout disc obs window
+DRIBBLE_MIN_TOUCHES = 2
+DRIBBLE_MIN_PROGRESS = 0.5  # m toward goal while a foot is in contact
 
 
 def parse_args():
@@ -144,10 +157,18 @@ def main():
     ep_first_touch = torch.full([num_envs], -1.0, device=device)
     ep_best_progress = torch.zeros(num_envs, device=device)
     ep_start_goal_dist = torch.zeros(num_envs, device=device)
+    ep_touch_count = torch.zeros(num_envs, device=device)
+    ep_touch_progress = torch.zeros(num_envs, device=device)
+    ep_last_touch = torch.full([num_envs], -1.0, device=device)
+    ep_last_kick = torch.full([num_envs], -1.0, device=device)
+    prev_contact = torch.zeros(num_envs, device=device, dtype=torch.bool)
+    prev_goal_dist = torch.zeros(num_envs, device=device)
 
     # completed-episode stats
     fin = {"goals": [], "oob": [], "kicks": [], "len": [], "first_touch": [],
-           "progress": [], "falls": 0, "episodes": 0}
+            "progress": [], "touches": [], "touch_progress": [], "dribbles": 0,
+            "falls": 0, "fall_phases": {phase: 0 for phase in FALL_PHASES},
+            "episodes": 0}
 
     # kick impact stats (one entry per kick event)
     kick_stats = {"speed": [], "ang_err": [], "on_still": [], "foot": [],
@@ -184,8 +205,11 @@ def main():
     grid_goals = np.zeros([GRID, GRID], dtype=np.int64)
     ANGLE_BINS = [0.0, 45.0, 90.0, 135.0, 180.0]
     kick_time_by_angle = [[] for _ in range(len(ANGLE_BINS) - 1)]
+    touch_time_by_distance = [[] for _ in range(len(DISTANCE_BINS_M) - 1)]
+    approach_improvements = []
     plc_cell = torch.zeros(num_envs, 2, dtype=torch.long)          # (row, col)
     plc_angle = torch.zeros(num_envs)                              # deg
+    plc_distance = torch.zeros(num_envs)                           # m
     plc_time = torch.zeros(num_envs, device=device)
     plc_kicked = torch.zeros(num_envs, dtype=torch.bool)
 
@@ -203,6 +227,7 @@ def main():
         # robot straight behind the ball relative to the goal
         root = env._engine.get_root_pos(char_id)[env_ids, 0:2]
         v_rb = ball - root
+        plc_distance[env_ids] = torch.linalg.norm(v_rb, dim=-1).cpu()
         v_bg = env._goal_pos[env_ids] - ball
         v_rb = v_rb / torch.clamp_min(torch.linalg.norm(v_rb, dim=-1, keepdim=True), 1e-6)
         v_bg = v_bg / torch.clamp_min(torch.linalg.norm(v_bg, dim=-1, keepdim=True), 1e-6)
@@ -229,6 +254,12 @@ def main():
         ep_first_touch[env_ids] = -1.0
         ep_best_progress[env_ids] = 0.0
         ep_start_goal_dist[env_ids] = d
+        ep_touch_count[env_ids] = 0.0
+        ep_touch_progress[env_ids] = 0.0
+        ep_last_touch[env_ids] = -1.0
+        ep_last_kick[env_ids] = -1.0
+        prev_contact[env_ids] = False
+        prev_goal_dist[env_ids] = d
 
     obs, info = env.reset()
     init_episode_stats(torch.arange(num_envs, device=device, dtype=torch.long))
@@ -250,6 +281,8 @@ def main():
             ball_pos = env._get_ball_pos()
             ball_vel = env._engine.get_root_vel(ball_id)[:, 0:2]
             ball_speed = torch.linalg.norm(ball_vel, dim=-1)
+            goal_d = torch.linalg.norm(env._goal_pos - ball_pos[:, 0:2], dim=-1)
+            root_pos = env._engine.get_root_pos(char_id)
             body_pos = env._engine.get_body_pos(char_id)
             in_contact = torch.zeros(num_envs, device=device, dtype=torch.bool)
             foot_dists = []
@@ -258,10 +291,20 @@ def main():
                 d = torch.linalg.norm(foot_pos - ball_pos, dim=-1)
                 foot_dists.append(d)
                 in_contact |= d < env._ball_contact_dist
+            touch_onset = in_contact & (~prev_contact)
             first = in_contact & (ep_first_touch < 0.0)
             ep_first_touch[first] = env._time_buf[first]
+            ep_touch_count += touch_onset.float()
+            ep_touch_progress += torch.clamp_min(prev_goal_dist - goal_d, 0.0) \
+                * in_contact.float()
+            ep_last_touch[in_contact] = env._time_buf[in_contact]
+            for e in first.nonzero(as_tuple=False).flatten().tolist():
+                b = distance_bin(plc_distance[e].item())
+                touch_time_by_distance[b].append(
+                    env._time_buf[e].item() - plc_time[e].item())
             kick = in_contact & ((ball_speed - prev_ball_speed) > KICK_SPEED_GAIN)
             ep_kicks += kick.float()
+            ep_last_kick[kick] = env._time_buf[kick]
 
             # --- kick impact metrics (T1 style, measured at the kick step) --
             kick_ids = kick.nonzero(as_tuple=False).flatten()
@@ -291,6 +334,15 @@ def main():
                         ang = plc_angle[e].item()
                         b = min(int(ang / 45.0), len(ANGLE_BINS) - 2)
                         kick_time_by_angle[b].append(t_kick)
+                        root_xy = root_pos[e, 0:2]
+                        v_rb = ball_pos[e, 0:2] - root_xy
+                        v_bg = env._goal_pos[e] - ball_pos[e, 0:2]
+                        v_rb = v_rb / torch.clamp_min(torch.linalg.norm(v_rb), 1e-6)
+                        v_bg = v_bg / torch.clamp_min(torch.linalg.norm(v_bg), 1e-6)
+                        impact_approach = torch.rad2deg(torch.acos(
+                            torch.clamp((v_rb * v_bg).sum(), -1.0, 1.0))).item()
+                        approach_improvements.append(
+                            approach_angle_improvement(ang, impact_approach))
 
             # goal / OOB event times for outcome attribution
             for e in env._goal_scored_buf.nonzero(as_tuple=False).flatten().tolist():
@@ -298,25 +350,17 @@ def main():
             for e in env._ball_oob_buf.nonzero(as_tuple=False).flatten().tolist():
                 ep_events[e]["oobs"].append(env._time_buf[e].item())
 
-            # Frente H: goal/OOB soft-resets close the trial and (the env has
-            # already teleported the ball) open the next one
-            soft = torch.logical_or(env._goal_scored_buf, env._ball_oob_buf)
-            soft_ids = soft.nonzero(as_tuple=False).flatten()
-            if len(soft_ids) > 0:
-                close_placements(soft_ids, env._goal_scored_buf[soft_ids].cpu())
-                record_placements(soft_ids)
-
             # engage-latency timer: ball within reach and stationary
-            root_pos = env._engine.get_root_pos(char_id)
             near_still = (torch.linalg.norm(
                 ball_pos[:, 0:2] - root_pos[:, 0:2], dim=-1) < ENGAGE_DIST) \
                 & (ball_speed < BALL_STILL_SPEED)
             reach_still_t = torch.where(near_still, reach_still_t + dt,
                                         torch.zeros_like(reach_still_t))
             prev_ball_speed = ball_speed
+            prev_contact = in_contact
+            prev_goal_dist = goal_d
 
             # ball->goal progress (best over the episode)
-            goal_d = torch.linalg.norm(env._goal_pos - ball_pos[:, 0:2], dim=-1)
             ep_best_progress = torch.maximum(ep_best_progress,
                                              ep_start_goal_dist - goal_d)
 
@@ -327,27 +371,44 @@ def main():
             step_i += 1
 
             # --- episode boundaries ------------------------------------------
+            # goal / ball-out now END the episode (paper 4.1 termination):
+            # SUCC on goal, FAIL on out; only true falls are FAIL + not soft
             done_ids = (done != 0).nonzero(as_tuple=False).flatten()
             if len(done_ids) > 0:
-                for e in done_ids.tolist():
+                # capture flags BEFORE env.reset clears them
+                goal_flags = env._goal_scored_buf[done_ids].cpu()
+                soft_flags = env._soft_done_buf[done_ids].cpu()
+                for j, e in enumerate(done_ids.tolist()):
                     fin["episodes"] += 1
                     fin["goals"].append(ep_goals[e].item())
                     fin["oob"].append(ep_oob[e].item())
                     fin["kicks"].append(ep_kicks[e].item())
                     fin["len"].append(env._time_buf[e].item())
                     fin["progress"].append(ep_best_progress[e].item())
+                    fin["touches"].append(ep_touch_count[e].item())
+                    fin["touch_progress"].append(ep_touch_progress[e].item())
+                    if ep_touch_count[e].item() >= DRIBBLE_MIN_TOUCHES \
+                            and ep_touch_progress[e].item() >= DRIBBLE_MIN_PROGRESS:
+                        fin["dribbles"] += 1
                     if ep_first_touch[e].item() >= 0.0:
                         fin["first_touch"].append(ep_first_touch[e].item())
                     fall_time = None
-                    if done[e].item() == 1:  # DoneFlags.FAIL
+                    if done[e].item() == 1 and not bool(soft_flags[j]):  # true fall
                         fin["falls"] += 1
                         fall_time = env._time_buf[e].item()
+                        first_touch = ep_first_touch[e].item()
+                        phase = classify_fall_phase(
+                            first_touch if first_touch >= 0.0 else None,
+                            ep_last_touch[e].item() if ep_last_touch[e].item() >= 0.0 else None,
+                            ep_last_kick[e].item() if ep_last_kick[e].item() >= 0.0 else None,
+                            fall_time)
+                        fin["fall_phases"][phase] += 1
                     close_episode_events(e, fall_time)
                 obs_r, info_r = env.reset(done_ids)
                 obs, info = obs_r, info_r
                 init_episode_stats(done_ids)
-                # Frente H: episode end closes the open trial without a goal
-                close_placements(done_ids, torch.zeros(len(done_ids), dtype=torch.bool))
+                # Frente H: episode end closes the open trial (scored iff goal)
+                close_placements(done_ids, goal_flags)
                 record_placements(done_ids)
                 reach_still_t[done_ids] = 0.0
                 prev_ball_speed = torch.linalg.norm(
@@ -405,6 +466,32 @@ def main():
             print("kick outcomes:  goal<={:.0f}s: {:.1%}   OOB<={:.0f}s: {:.1%}   fall<={:.0f}s: {:.1%}   (of {:d} kicks)".format(
                 OUTCOME_GOAL_S, outcomes["goal"] / t, OUTCOME_OOB_S, outcomes["oob"] / t,
                 OUTCOME_FALL_S, outcomes["fall"] / t, t))
+    print("")
+    print("-- behavioral metrics --")
+    print("touches/episode: {:.3f} +- {:.3f}".format(*stat("touches")))
+    print("controlled progress: {:.3f} +- {:.3f} m/episode; {:.3f} m/touch".format(
+        *stat("touch_progress"),
+        float(np.sum(fin["touch_progress"]) / max(np.sum(fin["touches"]), 1.0))))
+    print("dribble sequences: {:.1%} of episodes (>={:d} touches and >={:.1f}m controlled progress)".format(
+        fin["dribbles"] / max(n, 1), DRIBBLE_MIN_TOUCHES, DRIBBLE_MIN_PROGRESS))
+    if len(approach_improvements) > 0:
+        improvements = np.asarray(approach_improvements)
+        print("approach-angle improvement: {:.1f} +- {:.1f} deg; improved {:.1%} (first kick)".format(
+            improvements.mean(), improvements.std(), float((improvements > 0.0).mean())))
+    print("time to first touch by initial distance:")
+    for b, values in enumerate(touch_time_by_distance):
+        lo, hi = DISTANCE_BINS_M[b], DISTANCE_BINS_M[b + 1]
+        label = "{:.0f}-inf".format(lo) if not np.isfinite(hi) \
+            else "{:.0f}-{:.0f}".format(lo, hi)
+        if len(values) > 0:
+            print("   {:>5s} m: {:5.2f} +- {:4.2f} s ({:d} touches)".format(
+                label, float(np.mean(values)), float(np.std(values)), len(values)))
+        else:
+            print("   {:>5s} m: (no touches)".format(label))
+    if fin["falls"] > 0:
+        print("fall phase:      " + "   ".join(
+            "{} {:.1%}".format(phase, fin["fall_phases"][phase] / fin["falls"])
+            for phase in FALL_PHASES))
     print("")
     print("-- style coverage (nearest demo clip per rollout window) --")
     rollout_obs = torch.cat(style_windows, dim=0)

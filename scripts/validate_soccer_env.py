@@ -230,7 +230,7 @@ def main():
     check(root_rot[:, 2].std().item() > 0.2,
           "robot headings randomized (quat z std = {:.2f})".format(root_rot[:, 2].std().item()))
 
-    # --- 8. goal event: ball-only soft reset ---------------------------------
+    # --- 8. goal event: episode ends (SUCC), robot kept, ball respawned ------
     env.reset()
     ball_id = env._get_ball_id()
     # park the robot away from the ball path
@@ -253,17 +253,36 @@ def main():
 
     goal_seen = torch.zeros([NUM_ENVS], device=DEVICE, dtype=torch.bool)
     goal_step_reward = torch.zeros([NUM_ENVS], device=DEVICE)
-    t_before = env._time_buf.clone()
+    done_at_goal = torch.zeros([NUM_ENVS], device=DEVICE, dtype=torch.long)
+    soft_at_goal = torch.zeros([NUM_ENVS], device=DEVICE, dtype=torch.bool)
+    max_root_moved = 0.0
     for _ in range(40):
         _, r, done, _ = env.step(zero_a)
         new_goals = env._goal_scored_buf & ~goal_seen
         goal_step_reward[new_goals] = r[new_goals]
+        done_at_goal[new_goals] = done[new_goals].long()
+        soft_at_goal[new_goals] = env._soft_done_buf[new_goals]
         goal_seen |= env._goal_scored_buf
+        done_ids = (done != 0).nonzero(as_tuple=False).flatten()
+        if len(done_ids) > 0:
+            pose_before = env._engine.get_root_pos(char_id)[done_ids].clone()
+            env.reset(done_ids)
+            pose_after = env._engine.get_root_pos(char_id)[done_ids]
+            moved = torch.linalg.norm(pose_after - pose_before, dim=-1).max().item()
+            max_root_moved = max(max_root_moved, moved)
+            t_after = env._time_buf[done_ids]
+            check(bool((t_after == 0.0).all().item()),
+                  "episode clock restarted on the ball-event reset")
         if bool(goal_seen.all().item()):
             break
     check(bool(goal_seen.all().item()), "goal detected in all envs")
-    check(bool((env._time_buf > t_before).all().item()),
-          "episode clock kept running through the goal (soft reset)")
+    check(bool((done_at_goal == 2).all().item()),  # DoneFlags.SUCC
+          "goal terminates the episode with SUCC (paper 4.1)")
+    check(bool(soft_at_goal.all().item()),
+          "goal done flagged as soft (ball-only reset)")
+    check(max_root_moved < 1e-4,
+          "robot state untouched by the ball-event reset (moved {:.2e} m)".format(
+              max_root_moved))
     ball_pos = env._get_ball_pos()
     inside = (torch.abs(ball_pos[:, 0] - off[:, 0]) < 0.5 * env._field_length) & \
              (torch.abs(ball_pos[:, 1] - off[:, 1]) < 0.5 * env._field_width)
@@ -272,7 +291,7 @@ def main():
           "goal step paid the terminal goal reward (min {:.1f})".format(
               goal_step_reward.min().item()))
 
-    # --- 9. out of bounds: soft reset, no goal -------------------------------
+    # --- 9. out of bounds: episode ends (FAIL), no goal, robot kept ----------
     env.reset()
     park = env._engine.get_root_pos(char_id).clone()
     park[:, 0] = off[:, 0]
@@ -292,14 +311,26 @@ def main():
 
     oob_seen = torch.zeros([NUM_ENVS], device=DEVICE, dtype=torch.bool)
     goal_flagged = torch.zeros([NUM_ENVS], device=DEVICE, dtype=torch.bool)
+    done_at_oob = torch.zeros([NUM_ENVS], device=DEVICE, dtype=torch.long)
+    soft_at_oob = torch.zeros([NUM_ENVS], device=DEVICE, dtype=torch.bool)
     for _ in range(40):
-        env.step(zero_a)
+        _, _, done, _ = env.step(zero_a)
+        new_oob = env._ball_oob_buf & ~oob_seen
+        done_at_oob[new_oob] = done[new_oob].long()
+        soft_at_oob[new_oob] = env._soft_done_buf[new_oob]
         oob_seen |= env._ball_oob_buf
         goal_flagged |= env._goal_scored_buf
+        done_ids = (done != 0).nonzero(as_tuple=False).flatten()
+        if len(done_ids) > 0:
+            env.reset(done_ids)
         if bool(oob_seen.all().item()):
             break
     check(bool(oob_seen.all().item()), "sideline out detected in all envs")
     check(not bool(goal_flagged.any().item()), "sideline out never counted as goal")
+    check(bool((done_at_oob == 1).all().item()),  # DoneFlags.FAIL
+          "ball out terminates the episode with FAIL (paper 4.1)")
+    check(bool(soft_at_oob.all().item()),
+          "out done flagged as soft (ball-only reset)")
     ball_pos = env._get_ball_pos()
     inside = (torch.abs(ball_pos[:, 0] - off[:, 0]) < 0.5 * env._field_length) & \
              (torch.abs(ball_pos[:, 1] - off[:, 1]) < 0.5 * env._field_width)
